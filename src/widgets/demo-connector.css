@@ -1,0 +1,46 @@
+.demo-connector {
+  min-width: 0;
+  color: var(--text-primary, #20262d);
+}
+.demo-connector h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.demo-connector-note {
+  margin: 0 0 18px;
+  color: #687482;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.demo-connector dl {
+  margin: 0 0 16px;
+}
+.demo-connector dt {
+  margin-top: 10px;
+  color: #687482;
+  font-size: 12px;
+}
+.demo-connector dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.demo-connector summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.demo-connector pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 10px 0;
+  padding: 12px;
+  background: #f4f6f8;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.demo-connector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
