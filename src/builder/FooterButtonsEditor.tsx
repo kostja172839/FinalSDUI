@@ -12,6 +12,8 @@ import { Button, FieldErrorScope, IconButton, Input, Select, useFieldError } fro
 import { createId } from './operations';
 import { ValueSourceEditor } from './ValueSourceEditor';
 import { WidgetInvocationEditor } from './WidgetInvocationEditor';
+import { BoundPropsEditor } from './ComponentPropsEditor';
+import { getActionPresentationDescriptors } from '../../shared/action-presentation';
 
 function HostParametersEditor({
   params = {},
@@ -187,8 +189,8 @@ export function FooterButtonsEditor({
   return (
     <div className="builder-actions-editor">
       <p className="builder-property-copy">
-        Отдельные кнопки всегда видны внизу карточки. Например, «Согласовать» или «Закрыть». Меню «Действия»
-        настраивается отдельно ниже.
+        Отдельные кнопки расположены внизу карточки. Например, «Согласовать» или «Закрыть». Подпись,
+        доступность и видимость можно связать с API. Меню «Действия» настраивается отдельно ниже.
       </p>
       {buttons.map((button, index) => (
         <FieldErrorScope path={`buttons[${index}]`} key={button.id}>
@@ -329,6 +331,15 @@ export function FooterButtonsEditor({
                 </>
               )}
             </FieldErrorScope>
+            <BoundPropsEditor
+              title="Подпись и доступность кнопки"
+              pathPrefix="presentation"
+              descriptors={getActionPresentationDescriptors()}
+              configured={button.presentation}
+              legacy={{ label: button.label, variant: button.variant ?? 'secondary' }}
+              fields={fields}
+              onChange={(presentation) => change(button.id, { presentation })}
+            />
           </div>
         </FieldErrorScope>
       ))}

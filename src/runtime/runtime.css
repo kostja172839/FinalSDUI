@@ -90,6 +90,28 @@
 .runtime-block + .runtime-block {
   border-top: 1px solid var(--line);
 }
+/* Section appearance owns its boundary, including inside builder preview frames. */
+.split-body .runtime-block.runtime-section.runtime-section--plain,
+.split-body .runtime-block.runtime-section.runtime-section--outlined {
+  border-top: 0;
+}
+.section-frame {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.section-frame--outlined {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.section-frame--outlined > .section-static-heading {
+  margin: 0;
+  padding: 12px 14px 0;
+}
+.section-frame--outlined > .section-static-content {
+  padding: 6px 14px 12px;
+}
 .runtime-block.can-select {
   cursor: pointer;
   border-radius: 6px;
@@ -103,6 +125,13 @@
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+/* FinAI animates accordion bodies through overflow:hidden. Keep editor rings inside it. */
+.split-body .runtime-block.is-selected {
+  outline-offset: -2px;
+}
+.section-content .runtime-selectable-field {
+  outline-offset: -2px;
+}
 .block-heading {
   font-size: 14px;
   font-weight: 600;
@@ -115,6 +144,12 @@
   grid-template-columns: repeat(var(--columns, 2), minmax(0, 1fr));
   column-gap: 24px;
   row-gap: 22px;
+}
+.field-span-2 {
+  grid-column: span 2;
+}
+.field-span-3 {
+  grid-column: span 3;
 }
 .detail-field {
   min-width: 0;
@@ -164,10 +199,22 @@
 .value-link svg {
   flex-shrink: 0;
 }
-.section-content {
-  padding-top: 6px;
+.runtime-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
-.section-content .runtime-block:first-child {
+.section-content {
+  min-width: 0;
+  padding: 6px 2px 2px;
+}
+.section-content > .runtime-block:first-child {
   padding-top: 8px;
 }
 .description-content {
@@ -418,6 +465,9 @@
   line-height: 1.5;
 }
 @container (max-width:680px) {
+  .field-span-3 {
+    grid-column: span 2;
+  }
   .field-grid {
     grid-template-columns: repeat(min(var(--columns), 2), minmax(0, 1fr));
     column-gap: 20px;
@@ -442,6 +492,10 @@
   }
 }
 @container (max-width:420px) {
+  .field-span-2,
+  .field-span-3 {
+    grid-column: span 1;
+  }
   .field-grid {
     grid-template-columns: 1fr;
   }

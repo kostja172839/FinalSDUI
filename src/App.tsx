@@ -61,6 +61,7 @@ import { canonicalizeDefinition } from '../shared/values';
 import { contractExampleDefinition, contractExampleData } from '../shared/seeds';
 import type { ErpTableAdapter } from './runtime/erp-table';
 import { connectExpensesDemo } from './demo/erp-table-examples';
+import { validateWidgetInputs } from '../shared/widget-input-validation';
 
 const JsonWorkspace = lazy(() => import('./JsonWorkspace'));
 
@@ -376,6 +377,14 @@ export default function App({ erpTableAdapter }: AppProps = {}) {
       setNotice('Виджет не зарегистрирован для отдельного открытия');
       return;
     }
+    const inputIssues = validateWidgetInputs(
+      catalog.widgets.find((widget) => widget.id === intent.widgetId),
+      intent.input?.data ?? {},
+    );
+    if (inputIssues.length) {
+      setNotice(inputIssues.map((issue) => issue.message).join(' '));
+      return;
+    }
     pendingWidgets.current.clear();
     pendingWidgets.current.set(intent.correlationId, intent);
     setWidgetRequest(intent);
@@ -660,6 +669,7 @@ export default function App({ erpTableAdapter }: AppProps = {}) {
             actionDescriptors={catalog.actions}
             tableRefreshToken={refreshEpoch}
             erpTableAdapter={erpTableAdapter}
+            catalog={catalog}
           />
         ) : !opened ? (
           <div className="preview-error">
@@ -1061,6 +1071,7 @@ export default function App({ erpTableAdapter }: AppProps = {}) {
                           actionDescriptors={catalog.actions}
                           tableRefreshToken={refreshEpoch}
                           erpTableAdapter={erpTableAdapter}
+                          catalog={catalog}
                         />
                       )
                     )}

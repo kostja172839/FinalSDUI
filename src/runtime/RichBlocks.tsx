@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Badge } from '@salutejs/sdds-finai';
 import { AlertCircle, ArrowUpRight, CheckCircle2, FileText, Info, TriangleAlert } from 'lucide-react';
 import type {
@@ -13,10 +13,14 @@ import type {
   WidgetContext,
 } from '../../shared/model';
 import { resolveValue, resolveWidgetInput } from '../../shared/values';
+import type { ResolvedComponentOptions } from '../../shared/component-props';
+import { resolveFieldProps, type ResolvedFieldProps } from '../../shared/field-props';
+import { invokeWithActionPresentation, resolveActionPresentation } from '../../shared/action-presentation';
 import { Button } from '../ui';
 import { displayText, safeHref } from './bindings';
 import './RichBlocks.css';
 import { editorSelection, fieldSelectionClass } from './editorSelection';
+import { EditorFieldFrame } from '../builder/dragAndDrop';
 
 export type RichContentNode = CalloutNode | MetricsNode | RecordListNode | DocumentsNode;
 export interface RichBlockProps {
@@ -25,7 +29,7 @@ export interface RichBlockProps {
   widgetContext: WidgetContext;
   onOpenWidget?: (intent: OpenWidgetIntent) => void;
   dataIssues?: DataValidationIssue[];
-  renderValue?: (value: unknown, format: FieldFormat) => ReactNode;
+  renderValue?: (value: unknown, format: FieldFormat, options?: ResolvedFieldProps) => ReactNode;
   selectedNodeId?: string;
   onSelectNode?: (id: string) => void;
 }
@@ -84,16 +88,27 @@ export function RichBlock({
   selectedNodeId,
   onSelectNode,
 }: RichBlockProps) {
+  const [actionError, setActionError] = useState<{ scope: string; message: string }>();
+  const options: ResolvedComponentOptions = node as RichContentNode & ResolvedComponentOptions;
   const fieldValue = (field: FieldDefinition, scope: Record<string, unknown>, itemIndex?: number) => {
     const issues = messages(dataIssues, node.id, field.id, itemIndex);
+    const fieldScope = { ...scope, $root: data };
+    const fieldOptions = {
+      emptyText: options.emptyText,
+      ...resolveFieldProps(field, fieldScope).props,
+    };
+    const label = fieldOptions.label ?? field.label;
     return (
-      <div
-        {...editorSelection(field.id, field.label, selectedNodeId, onSelectNode)}
-        className={`detail-field ${issues.length ? 'rich-field-invalid' : ''} ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+      <EditorFieldFrame
+        fieldId={field.id}
+        label={label}
+        {...editorSelection(field.id, label, selectedNodeId, onSelectNode)}
+        className={`detail-field field-span-${Math.min(fieldOptions.span ?? 1, node.type === 'recordList' ? node.columns : 1)} ${issues.length ? 'rich-field-invalid' : ''} ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+        style={{ textAlign: fieldOptions.align }}
         key={field.id}
       >
         <dt>
-          {field.label}
+          {label}
           {field.validation?.required && (
             <span className="rich-required" aria-label="обязательное поле">
               {' '}
@@ -102,10 +117,14 @@ export function RichBlock({
           )}
         </dt>
         <dd>
-          {renderValue(resolveValue(scope, field.source, field.binding), field.format)}
+          {renderValue(resolveValue(fieldScope, field.source, field.binding), field.format, {
+            ...fieldOptions,
+            suffix: undefined,
+          })}
+          {fieldOptions.suffix && <span className="rich-metric-suffix">{fieldOptions.suffix}</span>}
           <Errors issues={issues} />
         </dd>
-      </div>
+      </EditorFieldFrame>
     );
   };
   if (node.type === 'callout') {
@@ -115,11 +134,13 @@ export function RichBlock({
         className={`rich-callout rich-callout--${node.tone}`}
         role={node.tone === 'error' ? 'alert' : 'note'}
       >
-        <Icon size={18} aria-hidden="true" />
+        {options.showIcon !== false && <Icon size={18} aria-hidden="true" />}
         <div>
-          <h3>{node.title}</h3>
+          {options.showTitle !== false && <h3>{node.title}</h3>}
           <div className="rich-callout-message">
-            {displayText(resolveValue(data, node.source, node.binding))}
+            {hasValue(resolveValue(data, node.source, node.binding))
+              ? displayText(resolveValue(data, node.source, node.binding))
+              : (options.emptyText ?? '—')}
           </div>
           <Errors issues={messages(dataIssues, node.id)} />
         </div>
@@ -129,46 +150,65 @@ export function RichBlock({
   if (node.type === 'metrics')
     return (
       <div className="rich-metrics">
-        <h3 className="block-heading">{node.title}</h3>
+        {options.showTitle !== false && <h3 className="block-heading">{node.title}</h3>}
         <dl
           className={`rich-metrics-grid rich-metrics-columns-${node.columns}`}
           style={{ '--rich-columns': node.columns } as CSSProperties}
         >
-          {node.items.map((field) => (
-            <div
-              key={field.id}
-              {...editorSelection(field.id, field.label, selectedNodeId, onSelectNode)}
-              className={`rich-metric ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
-            >
-              <dt>{field.label}</dt>
-              <dd>
-                <span className="rich-metric-value">
-                  {renderValue(resolveValue(data, field.source, field.binding), field.format)}
-                </span>
-                {field.suffix && <span className="rich-metric-suffix">{field.suffix}</span>}
-                <Errors issues={messages(dataIssues, node.id, field.id)} />
-              </dd>
-            </div>
-          ))}
+          {node.items.map((field) => {
+            const fieldOptions = {
+              emptyText: options.emptyText,
+              ...resolveFieldProps(field, { ...data, $root: data }).props,
+            };
+            const label = fieldOptions.label ?? field.label;
+            const suffix = fieldOptions.suffix ?? field.suffix;
+            return (
+              <EditorFieldFrame
+                key={field.id}
+                fieldId={field.id}
+                label={label}
+                {...editorSelection(field.id, label, selectedNodeId, onSelectNode)}
+                className={`rich-metric field-span-${Math.min(fieldOptions.span ?? 1, node.columns)} ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+                style={{ textAlign: fieldOptions.align }}
+              >
+                <dt>{label}</dt>
+                <dd>
+                  <span className="rich-metric-value">
+                    {renderValue(
+                      resolveValue({ ...data, $root: data }, field.source, field.binding),
+                      field.format,
+                      {
+                        ...fieldOptions,
+                        suffix: undefined,
+                      },
+                    )}
+                  </span>
+                  {suffix && <span className="rich-metric-suffix">{suffix}</span>}
+                  <Errors issues={messages(dataIssues, node.id, field.id)} />
+                </dd>
+              </EditorFieldFrame>
+            );
+          })}
         </dl>
       </div>
     );
 
   const source = resolveValue(data, node.source, node.binding);
-  const rows = rowsOf(source);
-  const shapeError = sourceErrors(source, rows);
+  const allRows = rowsOf(source);
+  const rows = options.maxItems === undefined ? allRows : allRows.slice(0, options.maxItems);
+  const shapeError = sourceErrors(source, allRows);
   const listIssues = messages(dataIssues, node.id);
   if (node.type === 'recordList')
     return (
       <div className="rich-record-list">
-        <h3 className="block-heading">{node.title}</h3>
+        {options.showTitle !== false && <h3 className="block-heading">{node.title}</h3>}
         {shapeError && listIssues.length === 0 && (
           <p className="runtime-note" role="status">
             {shapeError}
           </p>
         )}
         <Errors issues={listIssues} />
-        {!rows.length && <p className="runtime-empty">Записей пока нет</p>}
+        {!rows.length && <p className="runtime-empty">{options.emptyText ?? 'Записей пока нет'}</p>}
         {rows.map(({ row, index }) => {
           const title = displayText(resolveValue(row, node.itemTitle));
           const subtitle = resolveValue(row, node.itemSubtitle);
@@ -180,7 +220,7 @@ export function RichBlock({
                   {href ? (
                     <a
                       href={href}
-                      target="_blank"
+                      target={options.linkTarget === 'self' ? '_self' : '_blank'}
                       rel="noopener noreferrer"
                       className="rich-record-title"
                       onClick={(event) => event.stopPropagation()}
@@ -204,19 +244,24 @@ export function RichBlock({
             </article>
           );
         })}
+        {rows.length < allRows.length && (
+          <p className="runtime-note">
+            Показано {rows.length} из {allRows.length} записей
+          </p>
+        )}
       </div>
     );
 
   return (
     <div className="rich-documents">
-      <h3 className="block-heading">{node.title}</h3>
+      {options.showTitle !== false && <h3 className="block-heading">{node.title}</h3>}
       {shapeError && listIssues.length === 0 && (
         <p className="runtime-note" role="status">
           {shapeError}
         </p>
       )}
       <Errors issues={listIssues} />
-      {!rows.length && <p className="runtime-empty">Документов пока нет</p>}
+      {!rows.length && <p className="runtime-empty">{options.emptyText ?? 'Документов пока нет'}</p>}
       <ul className="rich-document-list">
         {rows.map(({ row, index }) => {
           const title = displayText(resolveValue(row, node.itemTitle));
@@ -225,41 +270,80 @@ export function RichBlock({
           const size = resolveValue(row, node.itemSize);
           const href = safeHref(resolveValue(row, node.itemHref));
           const rowIssues = messages(dataIssues, node.id, undefined, index);
+          const actionScope = { ...data, $item: row };
+          const actionEntry = node.action ? { ...node.action, label: title } : undefined;
+          const appearance = actionEntry
+            ? resolveActionPresentation(actionEntry, actionScope, widgetContext, 'ghost')
+            : undefined;
+          const actionErrorScope = JSON.stringify([
+            node.id,
+            widgetContext.entityId,
+            widgetContext.instanceId,
+            row,
+            node.action,
+          ]);
+          const unavailable =
+            appearance?.issues[0]?.message ??
+            (appearance?.disabled ? 'Действие сейчас недоступно.' : undefined);
           return (
             <li className="rich-document" key={`${String(row.id ?? 'document')}-${index}`}>
               <FileText size={20} aria-hidden="true" className="rich-document-icon" />
               <div className="rich-document-content">
                 {hasValue(status) && (
                   <div className="rich-document-status">
-                    <Badge size="xs" view="accent" text={displayText(status)} transparent />
+                    <Badge
+                      size={(options.statusSize ?? 'xs') as 'xs' | 's' | 'm' | 'l'}
+                      view={
+                        (options.statusView ?? 'accent') as
+                          | 'default'
+                          | 'accent'
+                          | 'positive'
+                          | 'warning'
+                          | 'negative'
+                          | 'dark'
+                          | 'light'
+                      }
+                      text={displayText(status)}
+                      transparent={options.statusTransparent ?? true}
+                      pilled={options.statusPilled}
+                      clear={options.statusClear}
+                    />
                   </div>
                 )}
-                {node.action ? (
+                {node.action && appearance?.visible ? (
                   <Button
-                    variant="ghost"
-                    size="sm"
+                    variant={appearance.variant}
+                    size={appearance.size}
                     className="rich-document-button"
-                    disabled={!onOpenWidget}
-                    title={!onOpenWidget ? 'Хост не подключил открытие виджета' : undefined}
+                    disabled={!onOpenWidget || appearance.disabled}
+                    title={unavailable ?? (!onOpenWidget ? 'Хост не подключил открытие виджета' : undefined)}
                     onClick={(event) => {
                       event.stopPropagation();
-                      if (!node.action) return;
-                      onOpenWidget?.({
-                        type: 'openWidget',
-                        widgetId: node.action.widgetId,
-                        context: widgetContext,
-                        correlationId: crypto.randomUUID(),
-                        input: resolveWidgetInput(node.action, { ...data, $item: row }, widgetContext),
-                      });
+                      if (!node.action || !actionEntry || !onOpenWidget) return;
+                      setActionError(undefined);
+                      void invokeWithActionPresentation(actionEntry, actionScope, widgetContext, async () => {
+                        await onOpenWidget({
+                          type: 'openWidget',
+                          widgetId: actionEntry.widgetId,
+                          context: widgetContext,
+                          correlationId: crypto.randomUUID(),
+                          input: resolveWidgetInput(actionEntry, actionScope, widgetContext),
+                        });
+                      }).catch(() =>
+                        setActionError({
+                          scope: actionErrorScope,
+                          message: 'Не удалось открыть документ. Попробуйте ещё раз.',
+                        }),
+                      );
                     }}
                   >
-                    {title}
+                    {appearance.label}
                     <ArrowUpRight size={14} aria-hidden="true" />
                   </Button>
-                ) : href ? (
+                ) : !node.action && href ? (
                   <a
                     href={href}
-                    target="_blank"
+                    target={options.linkTarget === 'self' ? '_self' : '_blank'}
                     rel="noopener noreferrer"
                     className="rich-document-title"
                     onClick={(event) => event.stopPropagation()}
@@ -274,12 +358,25 @@ export function RichBlock({
                   <p className="rich-document-description">{displayText(description)}</p>
                 )}
                 {hasValue(size) && <p className="rich-document-size">{bytesText(size)}</p>}
+                {node.action && appearance?.visible && unavailable && (
+                  <p className="runtime-note">{unavailable}</p>
+                )}
+                {actionError?.scope === actionErrorScope && (
+                  <p className="display-value-error" role="alert">
+                    {actionError.message}
+                  </p>
+                )}
                 <Errors issues={rowIssues} />
               </div>
             </li>
           );
         })}
       </ul>
+      {rows.length < allRows.length && (
+        <p className="runtime-note">
+          Показано {rows.length} из {allRows.length} документов
+        </p>
+      )}
     </div>
   );
 }

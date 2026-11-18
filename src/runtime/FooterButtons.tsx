@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { FooterButton } from '../../shared/model';
 import { Button } from '../ui';
+import { invokeWithActionPresentation, resolveActionPresentation } from '../../shared/action-presentation';
 import {
   dispatchButtonAction,
   getButtonActionAvailability,
@@ -16,12 +17,14 @@ export interface FooterButtonsProps extends ButtonActionEnvironment {
 export function FooterButtons({ buttons, ...environment }: FooterButtonsProps) {
   const prefix = useId();
   const { context } = environment;
+  const presentations = buttons.map((button) => resolveActionPresentation(button, environment.data, context));
   const scope = JSON.stringify([
     context.entityId,
     context.entityType,
     context.instanceId,
     buttons,
     environment.actionDescriptors,
+    presentations,
   ]);
   const currentScope = useRef({ key: scope, version: Symbol('footer') });
   if (currentScope.current.key !== scope) currentScope.current = { key: scope, version: Symbol('footer') };
@@ -45,12 +48,16 @@ export function FooterButtons({ buttons, ...environment }: FooterButtonsProps) {
   const run = async (button: FooterButton) => {
     if (lock.current?.version === version) return;
     if (!getButtonActionAvailability(button.action, environment).enabled) return;
+    const appearance = resolveActionPresentation(button, environment.data, context);
+    if (!appearance.visible || appearance.disabled) return;
     const token = Symbol(button.id);
     lock.current = { version, token };
     setPending({ version, id: button.id });
     setFailure(undefined);
     try {
-      await dispatchButtonAction(button.action, environment);
+      await invokeWithActionPresentation(button, environment.data, context, () =>
+        dispatchButtonAction(button.action, environment),
+      );
     } catch {
       if (alive.current && currentScope.current.version === version)
         setFailure({ version, id: button.id, message: 'Не удалось выполнить действие. Попробуйте ещё раз.' });
@@ -59,7 +66,7 @@ export function FooterButtons({ buttons, ...environment }: FooterButtonsProps) {
       if (alive.current && currentScope.current.version === version) setPending(undefined);
     }
   };
-  if (!buttons.length) return null;
+  if (!buttons.length || !presentations.some((presentation) => presentation.visible)) return null;
   const busy = pending?.version === version;
   return (
     <div
@@ -69,25 +76,30 @@ export function FooterButtons({ buttons, ...environment }: FooterButtonsProps) {
       onClick={(event) => event.stopPropagation()}
     >
       {buttons.map((button, index) => {
+        const appearance = presentations[index];
+        if (!appearance.visible) return null;
         const availability = getButtonActionAvailability(button.action, environment);
         const error = failure?.version === version && failure.id === button.id ? failure.message : undefined;
-        const hint = error ?? availability.reason;
+        const hint =
+          error ??
+          appearance.issues[0]?.message ??
+          (appearance.disabled ? 'Действие сейчас недоступно.' : availability.reason);
         const descriptionId = `${prefix}-${index}-description`;
         return (
           <div className="split-footer-button" key={button.id}>
             <Button
-              size="sm"
-              variant={button.variant ?? 'secondary'}
-              disabled={busy || !availability.enabled}
+              size={appearance.size}
+              variant={appearance.variant}
+              disabled={busy || appearance.disabled || !availability.enabled}
               aria-busy={(busy && pending.id === button.id) || undefined}
               aria-describedby={hint ? descriptionId : undefined}
-              title={!availability.enabled ? availability.reason : undefined}
+              title={hint}
               onClick={() => {
                 void run(button);
               }}
             >
               {busy && pending.id === button.id && <Loader2 size={14} className="spin" aria-hidden="true" />}
-              {button.label}
+              {appearance.label}
             </Button>
             {hint && (
               <span

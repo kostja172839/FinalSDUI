@@ -1,7 +1,12 @@
 import { catalog as demoCatalog } from './catalog';
+import { getComponentPropDescriptors, validateComponentProps } from './component-props';
+import { validateActionPresentation } from './action-presentation';
 import type { Catalog, CatalogField, FieldDefinition, ValidationIssue } from './model';
 import { isJsonValue, isSafeBinding, readPath, resolveValue } from './values';
 import { validateFieldValue } from './data-validation';
+import { isSectionAppearance } from './section-appearance';
+import { validateWidgetInputSources } from './widget-input-validation';
+import { getFieldPropDescriptors, validateFieldProps } from './field-props';
 import {
   ERP_TABLE_DATA_PROPS,
   ERP_TABLE_EVENTS,
@@ -129,6 +134,9 @@ export function validateTemplate(
   };
   const invocation = (v: Record<string, unknown>, path: string, nodeId?: string) => {
     parameters(v.props, `${path}.props`, nodeId);
+    const descriptor = catalog.widgets.find((widget) => widget.id === v.widgetId);
+    for (const issue of validateWidgetInputSources(descriptor, v.props))
+      add(`${path}.props.${issue.sourceName ?? issue.name}`, issue.message, nodeId);
     if (v.events !== undefined) {
       if (!record(v.events)) add(`${path}.events`, 'Обработчики виджета должны быть объектом.', nodeId);
       else {
@@ -175,6 +183,15 @@ export function validateTemplate(
     id(v.id, `${path}.id`, nodeId);
     string(v.label, `${path}.label`, 'Подпись', nodeId);
     valueSource(v.source, v.binding, `${path}.source`, fields, nodeId);
+    for (const issue of validateFieldProps(v.props))
+      add(`${path}.props${issue.key ? `.${issue.key}` : ''}`, issue.message, nodeId);
+    for (const descriptor of getFieldPropDescriptors())
+      if (!['label', 'suffix'].includes(descriptor.name) && Object.hasOwn(v, descriptor.name))
+        add(
+          `${path}.${descriptor.name}`,
+          `Параметр «${descriptor.label}» задаётся через props.${descriptor.name}.`,
+          nodeId,
+        );
     if (!formats.includes(String(v.format)))
       add(`${path}.format`, 'Выберите поддерживаемый формат значения.', nodeId);
     if (v.validation !== undefined) {
@@ -262,6 +279,36 @@ export function validateTemplate(
       }
       if (capabilities.nodeTypes && !capabilities.nodeTypes.includes(String(n.type)))
         add(`${p}.type`, `Клиент не поддерживает блок «${String(n.type)}».`, nodeId);
+      if (n.type !== 'widget' && n.type !== 'erpTable') {
+        for (const issue of validateComponentProps(n.type as import('./model').ContentNode['type'], n.props))
+          add(`${p}.props${issue.key ? `.${issue.key}` : ''}`, issue.message, nodeId);
+        const legacy: Record<string, string[]> = {
+          fields: ['columns'],
+          section: ['appearance', 'collapsible', 'defaultOpen'],
+          text: ['collapsible'],
+          callout: ['tone'],
+          metrics: ['columns'],
+          recordList: ['columns'],
+          documents: [],
+          badge: [],
+          avatar: ['size'],
+          image: ['height', 'fit'],
+          progress: ['max', 'showValue'],
+          divider: ['label'],
+          table: [],
+        };
+        for (const descriptor of getComponentPropDescriptors(n.type as import('./model').ContentNode['type']))
+          if (
+            descriptor.name !== 'title' &&
+            !legacy[String(n.type)]?.includes(descriptor.name) &&
+            Object.hasOwn(n, descriptor.name)
+          )
+            add(
+              `${p}.${descriptor.name}`,
+              `Параметр «${descriptor.label}» задаётся через props.${descriptor.name}.`,
+              nodeId,
+            );
+      }
       if (n.visibleWhen !== undefined) {
         if (!record(n.visibleWhen)) add(`${p}.visibleWhen`, 'Ожидается условие видимости.', nodeId);
         else {
@@ -288,6 +335,8 @@ export function validateTemplate(
       } else if (n.type === 'section') {
         boolean(n.collapsible, `${p}.collapsible`, nodeId);
         boolean(n.defaultOpen, `${p}.defaultOpen`, nodeId);
+        if (n.appearance !== undefined && !isSectionAppearance(n.appearance))
+          add(`${p}.appearance`, 'Оформление раздела: plain, divider или outlined.', nodeId);
         nodes(n.children, `${p}.children`, depth + 1);
         if (Array.isArray(n.children) && n.children.length === 0)
           add(`${p}.children`, 'Раздел пока пуст. Добавьте блоки.', nodeId, 'warning');
@@ -490,6 +539,8 @@ export function validateTemplate(
     id(entry.id, `${p}.id`, nodeId);
     invocation(entry, p, nodeId);
     string(entry.label, `${p}.label`, 'Подпись действия', nodeId);
+    for (const issue of validateActionPresentation(entry.presentation))
+      add(`${p}.presentation${issue.key ? `.${issue.key}` : ''}`, issue.message, nodeId);
     if (entry.kind !== 'openWidget')
       add(`${p}.kind`, 'Поддерживается открытие зарегистрированного виджета.', nodeId);
     const widget = catalog.widgets.find((item) => item.id === entry.widgetId);
@@ -510,6 +561,8 @@ export function validateTemplate(
       if (!record(button)) return add(p, 'Ожидается описание кнопки.', '$footer');
       id(button.id, `${p}.id`, '$footer');
       string(button.label, `${p}.label`, 'Подпись кнопки', '$footer');
+      for (const issue of validateActionPresentation(button.presentation))
+        add(`${p}.presentation${issue.key ? `.${issue.key}` : ''}`, issue.message, '$footer');
       if (typeof button.label === 'string' && button.label.length > 120)
         add(`${p}.label`, 'Сократите подпись кнопки до 120 символов.', '$footer');
       if (
@@ -518,7 +571,7 @@ export function validateTemplate(
       )
         add(`${p}.variant`, 'Выберите поддерживаемый стиль кнопки.', '$footer');
       for (const key of Object.keys(button))
-        if (!['id', 'label', 'variant', 'action'].includes(key))
+        if (!['id', 'label', 'variant', 'action', 'presentation'].includes(key))
           add(`${p}.${key}`, 'Неизвестная настройка кнопки.', '$footer');
       const target = button.action;
       const ap = `${p}.action`;

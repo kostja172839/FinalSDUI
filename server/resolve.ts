@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { seedEntities } from '../shared/seeds';
 import { safePath, validateTemplate, type ValidationCapabilities } from '../shared/validation';
 import type { BlockError, ContentNode, PreviewScenario, ResolvedSplit, SplitTemplate } from '../shared/model';
+import { validateResolvedData } from '../shared/data-validation';
 
 export class ApiError extends Error {
   constructor(
@@ -56,8 +57,19 @@ export function resolveSplit(
     else data.events = [];
   }
   const errors: BlockError[] = [];
+  const instanceId = randomUUID();
+  const dataIssues = validateResolvedData(
+    definition,
+    data,
+    { entityId, entityType: definition.entityType, instanceId, locale: 'ru-RU' },
+    capabilities?.catalog,
+  );
   const visit = (nodes: ContentNode[]) => {
     for (const node of nodes) {
+      if (node.type === 'widget') {
+        const messages = dataIssues.filter((issue) => issue.nodeId === node.id).map((issue) => issue.message);
+        if (messages.length) errors.push({ nodeId: node.id, message: [...new Set(messages)].join(' ') });
+      }
       if (scenario === 'error' && (node.type === 'table' || (errors.length === 0 && node.type === 'fields')))
         errors.push({
           nodeId: node.id,
@@ -75,7 +87,7 @@ export function resolveSplit(
   definition.tabs.forEach((tab) => visit(tab.nodes));
   return {
     schemaVersion: 1,
-    instanceId: randomUUID(),
+    instanceId,
     templateId: definition.id,
     templateRevision: revision,
     entityId,

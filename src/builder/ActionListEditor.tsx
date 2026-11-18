@@ -3,6 +3,8 @@ import type { CatalogField, SplitAction, WidgetDescriptor } from '../../shared/m
 import { Button, IconButton, Input, Select, Toggle, FieldErrorScope } from '../ui';
 import { createId } from './operations';
 import { WidgetInvocationEditor } from './WidgetInvocationEditor';
+import { BoundPropsEditor } from './ComponentPropsEditor';
+import { getActionPresentationDescriptors } from '../../shared/action-presentation';
 
 export function ActionListEditor({
   actions,
@@ -93,6 +95,15 @@ export function ActionListEditor({
               widget={widgets.find((widget) => widget.id === action.widgetId)}
               fields={fields}
               onChange={({ props, events }) => change(action.id, { props, events })}
+            />
+            <BoundPropsEditor
+              title="Подпись и доступность действия"
+              pathPrefix="presentation"
+              descriptors={getActionPresentationDescriptors()}
+              configured={action.presentation}
+              legacy={{ label: action.label, variant: 'ghost' }}
+              fields={fields}
+              onChange={(presentation) => change(action.id, { presentation })}
             />
           </div>
         </FieldErrorScope>

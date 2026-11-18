@@ -51,8 +51,10 @@ import {
   locateField,
   insertContentNode,
   moveContentNode,
+  moveFieldDefinition,
+  isFieldDropTarget,
   nodeContainers,
-  type NodeDropTarget,
+  type EditorDropTarget,
 } from './operations';
 import { getHeaderActions, getFooterActions } from '../../shared/actions';
 import { ActionListEditor } from './ActionListEditor';
@@ -64,12 +66,17 @@ import { PreviewDataProvider, PreviewRowScope } from './previewData';
 import {
   EditorDragProvider,
   NodeDragHandle,
+  NodeDragFrame,
   NodeDropZone,
+  FieldDropZone,
+  EditorFieldFrame,
   PaletteDragItem,
   type EditorDragItem,
 } from './dragAndDrop';
 import { ErpTableEditor } from './ErpTableEditor';
 import { DisplayNodeEditor } from './DisplayNodeEditor';
+import { BoundPropsEditor, ComponentPropsEditor } from './ComponentPropsEditor';
+import { getFieldPropDescriptors } from '../../shared/field-props';
 import './builder.css';
 
 export interface BuilderProps {
@@ -125,7 +132,7 @@ const BuilderSelectionContext = createContext<{ selectedId: string; select: (id:
 const formats: { value: FieldFormat; label: string }[] = [
   { value: 'text', label: 'Текст' },
   { value: 'date', label: 'Дата' },
-  { value: 'money', label: 'Сумма в рублях' },
+  { value: 'money', label: 'Сумма (валюта настраивается)' },
   { value: 'number', label: 'Число' },
   { value: 'status', label: 'Статус' },
   { value: 'person', label: 'Пользователь' },
@@ -324,6 +331,15 @@ function FieldListEditor({
               options={formats}
               onChange={(event) => change(selectedField.id, { format: event.target.value as FieldFormat })}
             />
+            <BoundPropsEditor
+              key={`field-props-${selectedField.id}`}
+              title="Оформление и формат поля"
+              descriptors={getFieldPropDescriptors()}
+              configured={selectedField.props}
+              legacy={selectedField as unknown as Record<string, unknown>}
+              fields={available}
+              onChange={(props) => change(selectedField.id, { props })}
+            />
             {metrics && (
               <Input
                 label="Пояснение после суммы"
@@ -469,20 +485,27 @@ export function Builder({
     select(node.id);
     setPaletteOpen(false);
   };
-  const drop = (item: EditorDragItem, target: NodeDropTarget) => {
+  const drop = (item: EditorDragItem, target: EditorDropTarget) => {
     const result =
-      item.kind === 'node'
-        ? moveContentNode(definition, item.nodeId, target)
-        : insertContentNode(definition, createNode(item.nodeType, catalog), target);
+      item.kind === 'field'
+        ? isFieldDropTarget(target)
+          ? moveFieldDefinition(definition, item.fieldId, target)
+          : { definition, error: 'Перенесите поле в совместимую группу полей.' }
+        : isFieldDropTarget(target)
+          ? { definition, error: 'В область полей можно переносить только поля.' }
+          : item.kind === 'node'
+            ? moveContentNode(definition, item.nodeId, target)
+            : insertContentNode(definition, createNode(item.nodeType, catalog), target);
     setDragMessage(
-      result.error ?? `Блок «${item.label}» ${item.kind === 'palette' ? 'добавлен' : 'перемещён'}.`,
+      result.error ??
+        `${item.kind === 'field' ? 'Поле' : 'Блок'} «${item.label}» ${item.kind === 'palette' ? 'добавлен' : 'перемещён'}.`,
     );
     if (!result.error) {
       if (result.definition !== definition) onChange(result.definition);
       if (result.selectedId) select(result.selectedId);
       setExpanded((old) => {
         const next = new Set(old);
-        next.delete(target.containerId);
+        next.delete(isFieldDropTarget(target) ? target.ownerId : target.containerId);
         return next;
       });
       setPaletteOpen(false);
@@ -529,35 +552,77 @@ export function Builder({
     const hasError = issues.some((issue) => issue.nodeId === node.id && issue.severity === 'error');
     return (
       <div key={node.id} className="builder-tree-node">
-        <NodeDropZone target={{ containerId, index }} label={`Перед блоком «${node.title}»`}>
-          <div
-            className={`builder-tree-row ${selectedId === node.id ? 'is-selected' : ''}`}
-            style={{ paddingLeft: 12 + depth * 15 }}
+        <NodeDropZone
+          target={{ containerId, index }}
+          label={`Перед блоком «${node.title}»`}
+          split
+          insideTarget={
+            node.type === 'section' ? { containerId: node.id, index: node.children.length } : undefined
+          }
+        >
+          <FieldDropZone
+            ownerId={node.id}
+            index={
+              node.type === 'fields' || node.type === 'recordList'
+                ? node.fields.length
+                : node.type === 'metrics'
+                  ? node.items.length
+                  : 0
+            }
+            label={`В поля блока «${node.title}»`}
           >
-            <NodeDragHandle nodeId={node.id} label={node.title || nodeLabels[node.type]} />
-            {node.type === 'section' ? (
+            <NodeDragFrame
+              nodeId={node.id}
+              label={node.title || nodeLabels[node.type]}
+              className={`builder-tree-row ${selectedId === node.id ? 'is-selected' : ''}`}
+              style={{ paddingLeft: 12 + depth * 15 }}
+            >
+              <NodeDragHandle nodeId={node.id} label={node.title || nodeLabels[node.type]} />
+              {node.type === 'section' ? (
+                <button
+                  type="button"
+                  className="builder-tree-expander"
+                  aria-label={`${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${node.title}»`}
+                  aria-expanded={!collapsed}
+                  aria-controls={`builder-section-${node.id}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleExpanded(node.id);
+                  }}
+                >
+                  {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                </button>
+              ) : (
+                <span className="builder-tree-spacer" />
+              )}
               <button
                 type="button"
-                className="builder-tree-expander"
-                aria-label={`${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${node.title}»`}
-                onClick={() => toggleExpanded(node.id)}
+                className="builder-tree-select"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  select(node.id);
+                  if (node.type === 'section') toggleExpanded(node.id);
+                }}
+                aria-expanded={node.type === 'section' ? !collapsed : undefined}
+                aria-controls={node.type === 'section' ? `builder-section-${node.id}` : undefined}
+                onKeyDown={(event) => {
+                  if (
+                    node.type === 'section' &&
+                    ((event.key === 'ArrowLeft' && !collapsed) || (event.key === 'ArrowRight' && collapsed))
+                  ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleExpanded(node.id);
+                  }
+                }}
+                aria-current={selectedId === node.id ? 'true' : undefined}
               >
-                {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                <Icon size={15} />
+                <span>{node.title || nodeLabels[node.type]}</span>
+                {hasError && <CircleAlert size={13} className="builder-error-icon" />}
               </button>
-            ) : (
-              <span className="builder-tree-spacer" />
-            )}
-            <button
-              type="button"
-              className="builder-tree-select"
-              onClick={() => select(node.id)}
-              aria-current={selectedId === node.id ? 'true' : undefined}
-            >
-              <Icon size={15} />
-              <span>{node.title || nodeLabels[node.type]}</span>
-              {hasError && <CircleAlert size={13} className="builder-error-icon" />}
-            </button>
-          </div>
+            </NodeDragFrame>
+          </FieldDropZone>
         </NodeDropZone>
         {(node.type === 'fields' ||
           node.type === 'recordList' ||
@@ -565,22 +630,40 @@ export function Builder({
           node.type === 'table') && (
           <div className="builder-tree-fields" style={{ paddingLeft: 38 + depth * 15 }}>
             {(node.type === 'metrics' ? node.items : node.type === 'table' ? node.columns : node.fields).map(
-              (field) => (
-                <button
-                  key={field.id}
-                  type="button"
-                  className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
-                  onClick={() => select(field.id)}
-                  aria-current={selectedId === field.id ? 'true' : undefined}
-                >
-                  <span>{field.label || 'Без подписи'}</span>
-                </button>
-              ),
+              (field) =>
+                node.type === 'table' ? (
+                  <button
+                    key={field.id}
+                    type="button"
+                    className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
+                    onClick={() => select(field.id)}
+                    aria-current={selectedId === field.id ? 'true' : undefined}
+                  >
+                    <span>{field.label || 'Без подписи'}</span>
+                  </button>
+                ) : (
+                  <EditorFieldFrame
+                    fieldId={field.id}
+                    label={field.label || 'Без подписи'}
+                    surface="tree"
+                    key={field.id}
+                    className="builder-tree-field-row"
+                  >
+                    <button
+                      type="button"
+                      className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
+                      onClick={() => select(field.id)}
+                      aria-current={selectedId === field.id ? 'true' : undefined}
+                    >
+                      {field.label || 'Без подписи'}
+                    </button>
+                  </EditorFieldFrame>
+                ),
             )}
           </div>
         )}
         {node.type === 'section' && !collapsed && (
-          <div>
+          <div id={`builder-section-${node.id}`}>
             {node.children.length ? (
               node.children.map((child, index) => renderNode(child, depth + 1, node.id, index))
             ) : (
@@ -1003,6 +1086,19 @@ export function Builder({
         )}
         {selectedNode.type === 'section' && (
           <SettingGroup title="Раздел">
+            <Select
+              label="Оформление раздела"
+              path="appearance"
+              value={selectedNode.appearance ?? 'divider'}
+              options={[
+                { value: 'plain', label: 'Без линий' },
+                { value: 'divider', label: 'Разделитель' },
+                { value: 'outlined', label: 'Рамка' },
+              ]}
+              onChange={(event) =>
+                updateNode({ appearance: event.target.value as 'plain' | 'divider' | 'outlined' })
+              }
+            />
             <Toggle
               label="Можно свернуть"
               checked={selectedNode.collapsible}
@@ -1370,6 +1466,12 @@ export function Builder({
             )}
           </>
         )}
+        <ComponentPropsEditor
+          key={`props-${selectedNode.id}`}
+          node={selectedNode}
+          catalog={catalog}
+          onChange={(props) => updateNode({ props })}
+        />
         <SettingGroup title="Условие отображения">
           <Toggle
             label="Показывать при условии"
@@ -1523,25 +1625,38 @@ export function Builder({
                 </div>
                 <div className="builder-structure-content">
                   <div className="builder-tree-shell">
-                    <button
-                      type="button"
-                      className={`builder-static-node ${selectedId === '$header' ? 'is-selected' : ''}`}
-                      onClick={() => select('$header')}
+                    <FieldDropZone
+                      ownerId="$header"
+                      index={definition.header.fields?.length ?? 0}
+                      label="В поля шапки карточки"
                     >
-                      <LayoutPanelTop size={16} />
-                      <span>Шапка карточки</span>
-                      <span className="builder-system-badge">Системная</span>
-                    </button>
+                      <button
+                        type="button"
+                        className={`builder-static-node ${selectedId === '$header' ? 'is-selected' : ''}`}
+                        onClick={() => select('$header')}
+                      >
+                        <LayoutPanelTop size={16} />
+                        <span>Шапка карточки</span>
+                        <span className="builder-system-badge">Системная</span>
+                      </button>
+                    </FieldDropZone>
                     <div className="builder-tree-fields">
                       {definition.header.fields?.map((field) => (
-                        <button
+                        <EditorFieldFrame
+                          fieldId={field.id}
+                          label={field.label || 'Без подписи'}
+                          surface="tree"
                           key={field.id}
-                          type="button"
-                          className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
-                          onClick={() => select(field.id)}
+                          className="builder-tree-field-row"
                         >
-                          {field.label}
-                        </button>
+                          <button
+                            type="button"
+                            className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
+                            onClick={() => select(field.id)}
+                          >
+                            {field.label}
+                          </button>
+                        </EditorFieldFrame>
                       ))}
                     </div>
                   </div>

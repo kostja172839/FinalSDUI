@@ -4,7 +4,14 @@ import { catalog } from '../shared/catalog';
 import type { SplitTemplate, WidgetContext } from '../shared/model';
 import { seedTemplates } from '../shared/seeds';
 import { validateTemplate } from '../shared/validation';
-import { isJsonValue, isSafeBinding, readPath, resolveValue, resolveWidgetInput } from '../shared/values';
+import {
+  canonicalizeDefinition,
+  isJsonValue,
+  isSafeBinding,
+  readPath,
+  resolveValue,
+  resolveWidgetInput,
+} from '../shared/values';
 import { resolveSplit } from '../server/resolve';
 
 const errors = (value: unknown) => validateTemplate(value).filter((issue) => issue.severity === 'error');
@@ -229,4 +236,139 @@ test('an injected catalog registers enterprise widgets while leaving data paths 
     validateTemplate(template, { catalog: privateCatalog }).filter((issue) => issue.severity === 'error'),
     [],
   );
+});
+
+test('canonical authoring rewrites generic node/field props and action presentation bindings while preserving literal business data', () => {
+  const template = arbitraryDefinition();
+  const fields = template.tabs[0].nodes[0];
+  assert.ok(fields.type === 'fields');
+  fields.props = {
+    title: { kind: 'binding', path: 'asset.groupTitle' },
+    emptyText: { kind: 'literal', value: 'asset.groupTitle' },
+  };
+  fields.fields[0].props = {
+    currency: { kind: 'binding', path: 'asset.currency' },
+    suffix: { kind: 'literal', value: 'asset.currency' },
+  };
+  template.header.fields = [
+    {
+      id: 'canonical-header-field',
+      label: 'Сумма',
+      binding: 'asset.amount',
+      format: 'money',
+      props: { label: { kind: 'binding', path: 'asset.amountLabel' } },
+    },
+  ];
+  template.header.actions = [
+    {
+      id: 'canonical-header-action',
+      kind: 'openWidget',
+      label: 'Открыть',
+      widgetId: 'asset-editor',
+      props: { payload: { kind: 'literal', value: { reference: 'asset.payload' } } },
+      presentation: { label: { kind: 'binding', path: 'asset.actionLabel' } },
+    },
+  ];
+  template.footer.actions = [
+    {
+      id: 'canonical-footer-action',
+      kind: 'openWidget',
+      label: 'Открыть',
+      widgetId: 'asset-editor',
+      presentation: {
+        visible: { kind: 'binding', path: 'asset.actionVisible' },
+        label: { kind: 'literal', value: 'asset.actionLabel' },
+      },
+    },
+  ];
+  template.footer.buttons = [
+    {
+      id: 'canonical-footer-button',
+      label: 'Обновить',
+      action: { kind: 'refresh' },
+      presentation: { label: { kind: 'binding', path: 'asset.buttonLabel' } },
+    },
+  ];
+  template.tabs[0].nodes.push(
+    {
+      id: 'canonical-section',
+      type: 'section',
+      title: 'Раздел',
+      collapsible: true,
+      defaultOpen: true,
+      props: { appearance: { kind: 'binding', path: 'asset.sectionAppearance' } },
+      children: [
+        {
+          id: 'canonical-progress',
+          type: 'progress',
+          title: 'Прогресс',
+          max: 100,
+          showValue: true,
+          value: { kind: 'literal', value: 50 },
+          props: {
+            max: { kind: 'binding', path: 'asset.progressTotal' },
+            caption: { kind: 'literal', value: 'asset.progressTotal' },
+          },
+        },
+      ],
+    },
+    {
+      id: 'canonical-documents',
+      type: 'documents',
+      title: 'Документы',
+      binding: 'events',
+      itemTitle: { kind: 'binding', path: 'name' },
+      action: {
+        id: 'canonical-document-action',
+        kind: 'openWidget',
+        label: 'Документ',
+        widgetId: 'asset-editor',
+        presentation: { label: { kind: 'binding', path: 'asset.documentLabel' } },
+      },
+    },
+  );
+  const saved = structuredClone(template);
+  const normalized = canonicalizeDefinition(template);
+  const normalizedFields = normalized.tabs[0].nodes[0];
+  assert.ok(normalizedFields.type === 'fields');
+  assert.deepEqual(normalizedFields.props, {
+    title: { kind: 'binding', path: 'entity.groupTitle' },
+    emptyText: { kind: 'literal', value: 'asset.groupTitle' },
+  });
+  assert.deepEqual(normalizedFields.fields[0].props, {
+    currency: { kind: 'binding', path: 'entity.currency' },
+    suffix: { kind: 'literal', value: 'asset.currency' },
+  });
+  assert.deepEqual(normalized.header.fields![0].props!.label, {
+    kind: 'binding',
+    path: 'entity.amountLabel',
+  });
+  assert.deepEqual(normalized.header.actions![0].presentation!.label, {
+    kind: 'binding',
+    path: 'entity.actionLabel',
+  });
+  assert.deepEqual(normalized.header.actions![0].props!.payload, {
+    kind: 'literal',
+    value: { reference: 'asset.payload' },
+  });
+  assert.deepEqual(normalized.footer.actions![0].presentation, {
+    visible: { kind: 'binding', path: 'entity.actionVisible' },
+    label: { kind: 'literal', value: 'asset.actionLabel' },
+  });
+  assert.deepEqual(normalized.footer.buttons![0].presentation!.label, {
+    kind: 'binding',
+    path: 'entity.buttonLabel',
+  });
+  const section = normalized.tabs[0].nodes.at(-2)!;
+  assert.ok(section.type === 'section');
+  assert.deepEqual(section.props!.appearance, { kind: 'binding', path: 'entity.sectionAppearance' });
+  assert.deepEqual(section.children[0].props, {
+    max: { kind: 'binding', path: 'entity.progressTotal' },
+    caption: { kind: 'literal', value: 'asset.progressTotal' },
+  });
+  const documents = normalized.tabs[0].nodes.at(-1)!;
+  assert.ok(documents.type === 'documents');
+  assert.equal(documents.binding, 'collections.events');
+  assert.deepEqual(documents.action!.presentation!.label, { kind: 'binding', path: 'entity.documentLabel' });
+  assert.deepEqual(template, saved);
 });

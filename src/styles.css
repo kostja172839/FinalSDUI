@@ -1267,6 +1267,173 @@ p {
     border-radius: 8px;
   }
 }
+
+/* DnD hit areas never take space from the editor's layout. */
+.builder-drop-container,
+.builder-node-frame,
+.builder-drag-field {
+  position: relative;
+  min-width: 0;
+}
+.builder-drop-zone,
+.builder-drop-zone.is-drag-active {
+  position: relative;
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+}
+.builder-drop-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+}
+.builder-drop-hit--before.builder-drop-hit--vertical {
+  height: 50%;
+  bottom: auto;
+}
+.builder-drop-hit--after.builder-drop-hit--vertical {
+  height: 50%;
+  top: auto;
+}
+.builder-drop-hit--before.has-inside,
+.builder-drop-hit--after.has-inside {
+  height: 25%;
+}
+.builder-drop-hit--inside {
+  top: 25%;
+  bottom: auto;
+  height: 50%;
+}
+.builder-drop-hit--before.builder-drop-hit--horizontal {
+  width: 50%;
+  right: auto;
+}
+.builder-drop-hit--after.builder-drop-hit--horizontal {
+  width: 50%;
+  left: auto;
+}
+.builder-drop-hit--edge {
+  top: -12px;
+  bottom: auto;
+  height: 24px;
+}
+.builder-drop-hit.is-over {
+  opacity: 1;
+}
+.builder-drop-hit::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+}
+.builder-drop-hit--before.builder-drop-hit--vertical::after,
+.builder-drop-hit--edge::after {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+}
+.builder-drop-hit--after.builder-drop-hit--vertical::after {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+}
+.builder-drop-hit--before.builder-drop-hit--horizontal::after {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.builder-drop-hit--after.builder-drop-hit--horizontal::after {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.builder-drop-hit--inside.is-over,
+.builder-drop-hit--full.is-over {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.builder-drop-hit > span {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  max-width: calc(100% - 8px);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 16px;
+}
+.builder-drag-handle {
+  width: 28px;
+  height: 32px;
+  flex-basis: 28px;
+  flex-shrink: 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.builder-drag-source-active {
+  opacity: 0.55;
+}
+.builder-drag-overlay {
+  max-width: none;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  align-items: flex-start;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  pointer-events: none;
+  transform: none;
+}
+.builder-node-tools,
+.builder-drag-field-tools {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 5;
+  opacity: 0.45;
+}
+.builder-node-frame:hover > .builder-node-tools,
+.builder-node-frame:focus-within > .builder-node-tools,
+.builder-drag-field:hover > .builder-drag-field-tools,
+.builder-drag-field:focus-within > .builder-drag-field-tools {
+  opacity: 1;
+}
+.builder-node-frame + .builder-node-frame > .runtime-block {
+  border-top: 1px solid var(--line);
+}
+.section-content > .builder-node-frame:first-child > .runtime-block {
+  padding-top: 8px;
+}
+.builder-drag-field--preview {
+  padding-right: 30px;
+}
+.builder-tree-field-row {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding-right: 32px;
+}
+.builder-tree-field-row > .builder-tree-field {
+  flex: 1;
+  min-width: 0;
+}
+.builder-tree-expander {
+  width: 28px;
+  height: 32px;
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

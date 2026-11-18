@@ -8,6 +8,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type ComponentProps,
 } from 'react';
 import { Accordion, AccordionItem, Badge, Tabs, TabItem } from '@salutejs/sdds-finai';
 import { AlertCircle, ArrowUpRight, Maximize2, Minimize2, Puzzle, RefreshCw, X } from 'lucide-react';
@@ -24,6 +25,7 @@ import type {
   DataValidationIssue,
   HostActionRegistry,
   HostActionDescriptor,
+  Catalog,
 } from '../../shared/model';
 import { Button, IconButton } from '../ui';
 import { displayText, isVisible, safeHref } from './bindings';
@@ -38,21 +40,34 @@ import { DisplayBlock } from './DisplayBlocks';
 import { ErpTableHost, type ErpTableAdapter } from './erp-table';
 import './runtime.css';
 import { editorSelection, fieldSelectionClass } from './editorSelection';
-import { EditorNodeFrame, EditorContainerDrop } from '../builder/dragAndDrop';
+import { EditorFieldFrame, EditorNodeFrame, EditorContainerDrop } from '../builder/dragAndDrop';
+import { sectionAppearance } from '../../shared/section-appearance';
+import { resolveComponentNode } from '../../shared/component-props';
+import { resolveFieldProps, type ResolvedFieldProps } from '../../shared/field-props';
 
 // FinAI Accordion derives its DOM IDs from numeric event keys.
 let nextAccordionKey = 0;
 
-export function FormattedValue({ value, format }: { value: unknown; format: FieldFormat }) {
+export function FormattedValue({
+  value,
+  format,
+  options = {},
+}: {
+  value: unknown;
+  format: FieldFormat;
+  options?: ResolvedFieldProps;
+}) {
   if (value === null || value === undefined || value === '')
-    return <span className="empty-value">Не указано</span>;
+    return <span className="empty-value">{options.emptyText ?? 'Не указано'}</span>;
   if (format === 'status') {
     const text = displayText(value);
-    const view = /отмен|списан|ошиб/i.test(text)
-      ? 'negative'
-      : /открыт|учёт|учет|проведен|актив/i.test(text)
-        ? 'positive'
-        : 'accent';
+    const view =
+      options.statusView ??
+      (/отмен|списан|ошиб/i.test(text)
+        ? 'negative'
+        : /открыт|учёт|учет|проведен|актив/i.test(text)
+          ? 'positive'
+          : 'accent');
     return <Badge size="xs" view={view} text={text} transparent />;
   }
   if (format === 'person')
@@ -85,11 +100,11 @@ export function FormattedValue({ value, format }: { value: unknown; format: Fiel
       <>
         {!isValidDateValue(value)
           ? displayText(value)
-          : new Intl.DateTimeFormat('ru-RU', {
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric',
-              timeZone: 'UTC',
+          : new Intl.DateTimeFormat(options.locale ?? 'ru-RU', {
+              ...(options.dateStyle || options.timeStyle
+                ? { dateStyle: options.dateStyle, timeStyle: options.timeStyle }
+                : ({ day: 'numeric', month: 'long', year: 'numeric' } as const)),
+              timeZone: options.timeZone ?? 'UTC',
             }).format(date)}
       </>
     );
@@ -100,10 +115,21 @@ export function FormattedValue({ value, format }: { value: unknown; format: Fiel
       <>
         {['number', 'string'].includes(typeof value) && String(value).trim() && Number.isFinite(number)
           ? new Intl.NumberFormat(
-              'ru-RU',
+              options.locale ?? 'ru-RU',
               format === 'money'
-                ? { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }
-                : { maximumFractionDigits: 4 },
+                ? {
+                    style: 'currency',
+                    currency: options.currency ?? 'RUB',
+                    minimumFractionDigits:
+                      options.minFractionDigits ?? Math.min(2, options.maxFractionDigits ?? 2),
+                    maximumFractionDigits:
+                      options.maxFractionDigits ?? Math.max(2, options.minFractionDigits ?? 0),
+                  }
+                : {
+                    minimumFractionDigits: options.minFractionDigits,
+                    maximumFractionDigits:
+                      options.maxFractionDigits ?? Math.max(4, options.minFractionDigits ?? 0),
+                  },
             ).format(number)
           : displayText(value)}
       </>
@@ -277,13 +303,76 @@ function FieldDataErrors({
     </div>
   ) : null;
 }
-function ContentBlock({ node, context }: { node: ContentNode; context: RenderContext }) {
+function DetailField({
+  field,
+  data,
+  nodeId,
+  columns,
+  issues,
+  selectedNodeId,
+  onSelectNode,
+  emptyText,
+}: {
+  field: FieldDefinition;
+  data: Record<string, unknown>;
+  nodeId: string;
+  columns: number;
+  issues: DataValidationIssue[];
+  selectedNodeId?: string;
+  onSelectNode?: (id: string) => void;
+  emptyText?: string;
+}) {
+  const scope = { ...data, $root: data };
+  const { props } = resolveFieldProps(field, scope);
+  const label = props.label ?? field.label;
+  return (
+    <EditorFieldFrame
+      fieldId={field.id}
+      label={label || field.label}
+      {...editorSelection(field.id, label || field.label, selectedNodeId, onSelectNode)}
+      className={`detail-field field-span-${Math.min(props.span ?? 1, columns)} ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+      style={{ textAlign: props.align }}
+    >
+      <dt>{label}</dt>
+      <dd>
+        <FormattedValue
+          value={resolveValue(scope, field.source, field.binding)}
+          format={field.format}
+          options={{ emptyText, ...props }}
+        />
+        {props.suffix && <span> {props.suffix}</span>}
+        <FieldDataErrors issues={issues} nodeId={nodeId} fieldId={field.id} />
+      </dd>
+    </EditorFieldFrame>
+  );
+}
+
+function ContentBlock({ node: sourceNode, context }: { node: ContentNode; context: RenderContext }) {
+  const data = context.document.data;
+  const resolved = resolveComponentNode(sourceNode, { ...data, $context: context.widgetContext });
+  const node = resolved.node;
   const [accordionKey] = useState(() => ++nextAccordionKey);
   const defaultOpen =
-    node.type === 'section' ? node.defaultOpen : node.type === 'text' ? !node.collapsible : true;
+    node.type === 'section'
+      ? node.defaultOpen
+      : node.type === 'text'
+        ? (node.defaultExpanded ?? !node.collapsible)
+        : true;
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => setOpen(defaultOpen), [defaultOpen]);
-  const data = context.document.data;
+  useEffect(() => {
+    if (
+      context.onSelectNode &&
+      context.selectedNodeId &&
+      node.type === 'section' &&
+      includesNode(node.children, context.selectedNodeId)
+    )
+      setOpen(true);
+  }, [
+    context.selectedNodeId,
+    Boolean(context.onSelectNode),
+    node.type === 'section' ? node.children : undefined,
+  ]);
   const error = context.document.errors.find((item) => item.nodeId === node.id);
   if (!isVisible(node.visibleWhen, data))
     return context.onSelectNode ? (
@@ -292,7 +381,25 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
       </button>
     ) : null;
   let content: ReactNode;
-  if (error)
+  if (resolved.issues.length)
+    content = (
+      <div className="block-error" role="alert">
+        {resolved.issues.map((issue) => (
+          <p key={issue.key}>{issue.message}</p>
+        ))}
+      </div>
+    );
+  else if (node.type === 'widget' && context.dataIssues.some((issue) => issue.nodeId === node.id))
+    content = (
+      <div className="block-error" role="alert">
+        {context.dataIssues
+          .filter((issue) => issue.nodeId === node.id)
+          .map((issue) => (
+            <p key={issue.path}>{issue.message}</p>
+          ))}
+      </div>
+    );
+  else if (error)
     content = (
       <div className="block-error" role="alert">
         <AlertCircle size={18} />
@@ -312,68 +419,101 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
       case 'fields':
         content = (
           <>
-            {node.title && <h3 className="block-heading">{node.title}</h3>}
+            {node.showTitle !== false && node.title && <h3 className="block-heading">{node.title}</h3>}
             <dl className="field-grid" style={{ '--columns': node.columns } as CSSProperties}>
               {node.fields.map((field) => (
-                <div
+                <DetailField
                   key={field.id}
-                  {...editorSelection(field.id, field.label, context.selectedNodeId, context.onSelectNode)}
-                  className={`detail-field ${fieldSelectionClass(field.id, context.selectedNodeId, context.onSelectNode)}`}
-                >
-                  <dt>{field.label}</dt>
-                  <dd>
-                    <FormattedValue
-                      value={resolveValue(data, field.source, field.binding)}
-                      format={field.format}
-                    />
-                    <FieldDataErrors issues={context.dataIssues} nodeId={node.id} fieldId={field.id} />
-                  </dd>
-                </div>
+                  field={field}
+                  data={data}
+                  nodeId={node.id}
+                  columns={node.columns}
+                  issues={context.dataIssues}
+                  emptyText={node.emptyText}
+                  selectedNodeId={context.selectedNodeId}
+                  onSelectNode={context.onSelectNode}
+                />
               ))}
             </dl>
           </>
         );
         break;
       case 'section': {
+        const { appearance, accordionView } = sectionAppearance(node);
         const children = node.children.map((child) => (
           <ContentBlock key={child.id} node={child} context={context} />
         ));
-        content = node.collapsible ? (
-          <Accordion size="s" view="clear">
-            <AccordionItem
-              eventKey={accordionKey}
-              title={node.title}
-              opened={open}
-              onClick={() => setOpen((value) => !value)}
-              defaultIconContent="chevron"
-              defaultIconPlacement="left"
-              bodyProps={{
-                // Hidden tabs have zero offsetWidth during FinAI's initial measurement.
-                // This adapter always uses the same chevron; derive its indent from the
-                // kit's own icon and gap tokens without a mount-time DOM measurement.
-                style: {
-                  paddingLeft:
-                    'calc(var(--plasma-accordion-item-icon-size, 1rem) + var(--plasma-accordion-item-gap, 0.375rem))',
-                },
-              }}
-            >
-              <div className="section-content">{children}</div>
-            </AccordionItem>
-          </Accordion>
-        ) : (
-          <>
-            <h3 className="block-heading">{node.title}</h3>
-            <div className="section-content">{children}</div>
-          </>
+        if (!children.length && node.emptyText)
+          children.push(
+            <p className="runtime-note" key="empty">
+              {node.emptyText}
+            </p>,
+          );
+        content = (
+          <div className={`section-frame section-frame--${appearance}`}>
+            {node.collapsible ? (
+              <Accordion
+                size={(node.size ?? 's') as ComponentProps<typeof Accordion>['size']}
+                view={accordionView}
+                stretching="filled"
+              >
+                <AccordionItem
+                  eventKey={accordionKey}
+                  title={
+                    node.showTitle === false ? (
+                      <span className="runtime-sr-only">{node.title}</span>
+                    ) : (
+                      node.title
+                    )
+                  }
+                  opened={open}
+                  onClick={() => {
+                    if (!node.disabled) setOpen((value) => !value);
+                  }}
+                  disabled={node.disabled}
+                  defaultIconContent={node.defaultIconContent ?? 'chevron'}
+                  defaultIconPlacement={node.defaultIconPlacement ?? 'left'}
+                  alignWithTitle={node.alignWithTitle ?? true}
+                  pin={appearance === 'outlined' ? 'clear-clear' : 'square-square'}
+                  bodyProps={{
+                    // Hidden tabs have zero offsetWidth on the kit's first measurement.
+                    // Derive the left-icon indent from its tokens for every render instead.
+                    style: {
+                      paddingLeft:
+                        (node.defaultIconPlacement ?? 'left') === 'left' &&
+                        node.defaultIconContent !== 'clear' &&
+                        node.alignWithTitle !== false
+                          ? 'calc(var(--plasma-accordion-item-icon-size, 1rem) + var(--plasma-accordion-item-gap, 0.375rem))'
+                          : 0,
+                    },
+                  }}
+                >
+                  <div className="section-content">{children}</div>
+                </AccordionItem>
+              </Accordion>
+            ) : (
+              <>
+                {node.showTitle !== false && (
+                  <h3 className="block-heading section-static-heading">{node.title}</h3>
+                )}
+                <div className="section-content section-static-content">{children}</div>
+              </>
+            )}
+          </div>
         );
         break;
       }
       case 'text':
         content = (
           <>
-            {node.title && <h3 className="block-heading">{node.title}</h3>}
-            <div className={`description-content ${node.collapsible && !open ? 'is-clamped' : ''}`}>
-              {displayText(resolveValue(data, node.source, node.binding))}
+            {node.showTitle !== false && node.title && <h3 className="block-heading">{node.title}</h3>}
+            <div
+              className={`description-content ${node.collapsible && !open ? 'is-clamped' : ''}`}
+              style={{ WebkitLineClamp: node.maxLines ?? 4 }}
+            >
+              {resolveValue(data, node.source, node.binding) == null
+                ? (node.emptyText ?? 'Не указано')
+                : displayText(resolveValue(data, node.source, node.binding))}
             </div>
             {node.collapsible && (
               <button className="text-toggle" type="button" onClick={() => setOpen((value) => !value)}>
@@ -451,7 +591,9 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
             dataIssues={context.dataIssues}
             selectedNodeId={context.selectedNodeId}
             onSelectNode={context.onSelectNode}
-            renderValue={(value, format) => <FormattedValue value={value} format={format} />}
+            renderValue={(value, format, options) => (
+              <FormattedValue value={value} format={format} options={options} />
+            )}
           />
         );
         break;
@@ -462,7 +604,7 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
     <EditorNodeFrame nodeId={node.id} label={node.title}>
       <section
         data-node-id={node.id}
-        className={`runtime-block runtime-${node.type} ${context.selectedNodeId === node.id ? 'is-selected' : ''} ${context.onSelectNode ? 'can-select' : ''}`}
+        className={`runtime-block runtime-${node.type} ${node.type === 'section' ? `runtime-section--${sectionAppearance(node).appearance}` : ''} ${context.selectedNodeId === node.id ? 'is-selected' : ''} ${context.onSelectNode ? 'can-select' : ''}`}
         onClick={
           context.onSelectNode
             ? (event) => {
@@ -493,6 +635,7 @@ export interface SplitViewProps {
   previewWidth?: number;
   erpTableAdapter?: ErpTableAdapter;
   tableRefreshToken?: number;
+  catalog?: Catalog;
 }
 function includesNode(nodes: ContentNode[], id: string): boolean {
   return nodes.some(
@@ -520,6 +663,7 @@ export function SplitView({
   previewWidth,
   erpTableAdapter,
   tableRefreshToken,
+  catalog,
 }: SplitViewProps) {
   const panelPrefix = useId();
   const [activeTab, setActiveTab] = useState(doc.definition.tabs[0]?.id ?? '');
@@ -579,8 +723,8 @@ export function SplitView({
     [doc.entityId, doc.definition.entityType, doc.instanceId],
   );
   const dataIssues = useMemo(
-    () => validateResolvedData(doc.definition, doc.data, widgetContext),
-    [doc.definition, doc.data, widgetContext],
+    () => validateResolvedData(doc.definition, doc.data, widgetContext, catalog),
+    [doc.definition, doc.data, widgetContext, catalog],
   );
   const context: RenderContext = {
     document: doc,
@@ -732,20 +876,16 @@ export function SplitView({
             {!!doc.definition.header.fields?.length && (
               <dl className="field-grid header-meta" style={{ '--columns': 3 } as CSSProperties}>
                 {doc.definition.header.fields.map((field) => (
-                  <div
+                  <DetailField
                     key={field.id}
-                    {...editorSelection(field.id, field.label, selectedNodeId, onSelectNode)}
-                    className={`detail-field ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
-                  >
-                    <dt>{field.label}</dt>
-                    <dd>
-                      <FormattedValue
-                        value={resolveValue(doc.data, field.source, field.binding)}
-                        format={field.format}
-                      />
-                      <FieldDataErrors issues={dataIssues} nodeId="$header" fieldId={field.id} />
-                    </dd>
-                  </div>
+                    field={field}
+                    data={doc.data}
+                    nodeId="$header"
+                    columns={3}
+                    issues={dataIssues}
+                    selectedNodeId={selectedNodeId}
+                    onSelectNode={onSelectNode}
+                  />
                 ))}
               </dl>
             )}

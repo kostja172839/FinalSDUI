@@ -6,9 +6,15 @@ import type {
   SplitTemplate,
   ValueSource,
   WidgetContext,
+  Catalog,
 } from './model';
 import { readPath, resolveBindingPath, resolveValue, resolveWidgetInput } from './values';
 import { safeErpTableUrl, validateErpTableOptions } from './erp-table-contract';
+import { catalog as demoCatalog } from './catalog';
+import { validateWidgetInputs } from './widget-input-validation';
+import { resolveFieldProps } from './field-props';
+import { resolveComponentNode } from './component-props';
+import { validateActionPresentation } from './action-presentation';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -98,6 +104,7 @@ export function validateResolvedData(
   definition: SplitTemplate,
   data: Record<string, unknown>,
   context?: WidgetContext,
+  catalog: Pick<Catalog, 'widgets'> = demoCatalog,
 ): DataValidationIssue[] {
   const issues: DataValidationIssue[] = [];
   const dataPath = (source?: ValueSource, legacy?: string, prefix?: string) => {
@@ -130,18 +137,35 @@ export function validateResolvedData(
     itemIndex?: number,
     prefix?: string,
   ) =>
-    values.forEach((field, i) =>
-      validateFieldValue(field, resolveValue(scope, field.source, field.binding)).forEach((message) =>
+    values.forEach((field, i) => {
+      const fieldScope = { ...(isRecord(scope) ? scope : {}), $root: data };
+      const fieldPath = (source?: ValueSource, legacy?: string) => {
+        if (source?.kind === 'literal') return undefined;
+        const path = source?.kind === 'binding' ? source.path : legacy;
+        if (path === '$root') return undefined;
+        if (path?.startsWith('$root.')) return resolveBindingPath(data, path.slice('$root.'.length));
+        return itemIndex !== undefined && !prefix ? undefined : dataPath(source, legacy, prefix);
+      };
+      validateFieldValue(field, resolveValue(fieldScope, field.source, field.binding)).forEach((message) =>
         add(
           nodeId,
           `${path}[${i}]`,
           `${field.label}: ${message}`,
           field.id,
           itemIndex,
-          itemIndex !== undefined && !prefix ? undefined : dataPath(field.source, field.binding, prefix),
+          fieldPath(field.source, field.binding),
         ),
-      ),
-    );
+      );
+      for (const issue of resolveFieldProps(field, fieldScope).issues)
+        add(
+          nodeId,
+          `${path}[${i}].props${issue.key ? `.${issue.key}` : ''}`,
+          `${field.label}: ${issue.message}`,
+          field.id,
+          itemIndex,
+          fieldPath(field.props?.[issue.key]),
+        );
+    });
   const visible = (node: ContentNode) => {
     if (!node.visibleWhen) return true;
     const value = readPath(data, node.visibleWhen.binding);
@@ -212,6 +236,18 @@ export function validateResolvedData(
         sourceField(node.id, row, node.itemHref, `${rowPath}.itemHref`, 'link', index, itemPath);
         sourceField(node.id, row, node.itemStatus, `${rowPath}.itemStatus`, 'status', index, itemPath);
         sourceField(node.id, row, node.itemSize, `${rowPath}.itemSize`, 'number', index, itemPath);
+        for (const issue of validateActionPresentation(
+          node.action?.presentation,
+          { ...data, $item: row },
+          context,
+        ))
+          add(
+            node.id,
+            `${path}.action.presentation${issue.key ? `.${issue.key}` : ''}`,
+            issue.message,
+            undefined,
+            index,
+          );
       }
     });
   };
@@ -234,13 +270,59 @@ export function validateResolvedData(
       );
   };
   const visit = (nodes: ContentNode[], path: string) =>
-    nodes.forEach((node, index) => {
+    nodes.forEach((original, index) => {
       const p = `${path}[${index}]`;
+      const resolved = resolveComponentNode(original, context ? { ...data, $context: context } : data);
+      const node = resolved.node;
       if (!visible(node)) return;
+      for (const issue of resolved.issues)
+        add(
+          node.id,
+          `${p}.props${issue.key ? `.${issue.key}` : ''}`,
+          issue.message,
+          undefined,
+          undefined,
+          dataPath(original.props?.[issue.key]),
+        );
       if (node.type === 'section') visit(node.children, `${p}.children`);
       else if (node.type === 'fields') fields(node.fields, data, node.id, `${p}.fields`);
       else if (node.type === 'metrics') fields(node.items, data, node.id, `${p}.items`);
-      else if (node.type === 'progress') {
+      else if (node.type === 'widget') {
+        const descriptor = catalog.widgets.find((widget) => widget.id === node.widgetId);
+        let input: Record<string, unknown>;
+        try {
+          input = resolveWidgetInput(
+            node,
+            data,
+            context ?? { entityId: '', entityType: definition.entityType, instanceId: '', locale: 'ru-RU' },
+          ).data;
+        } catch {
+          add(node.id, `${p}.props`, 'Параметры виджета должны содержать данные JSON.');
+          return;
+        }
+        for (const issue of validateWidgetInputs(descriptor, input)) {
+          const ancestor = Object.entries(node.props ?? {})
+            .filter(([name]) => name === issue.name || issue.name.startsWith(`${name}.`))
+            .sort(([a], [b]) => b.length - a.length)[0];
+          const source = ancestor?.[1];
+          // JSON authoring may have no live context yet. Defer only those inputs that need it.
+          if (
+            !context &&
+            source?.kind === 'binding' &&
+            (source.path === '$context' || source.path.startsWith('$context.'))
+          )
+            continue;
+          const path = dataPath(source);
+          add(
+            node.id,
+            `${p}.props.${ancestor?.[0] ?? issue.name}`,
+            issue.message,
+            undefined,
+            undefined,
+            path && ancestor ? `${path}${issue.name.slice(ancestor[0].length)}` : path,
+          );
+        }
+      } else if (node.type === 'progress') {
         const value = resolveValue(data, node.value);
         const messages =
           Array.isArray(value) || isRecord(value)
@@ -341,6 +423,32 @@ export function validateResolvedData(
       ),
     );
   fields(header.fields ?? [], data, '$header', '$.header.fields');
+  for (const [location, actions] of [
+    ['header', definition.header.actions],
+    ['footer', definition.footer.actions],
+  ] as const)
+    actions?.forEach((action, index) => {
+      for (const issue of validateActionPresentation(action.presentation, data, context))
+        add(
+          location === 'header' ? '$header' : '$footer',
+          `$.${location}.actions[${index}].presentation${issue.key ? `.${issue.key}` : ''}`,
+          issue.message,
+          undefined,
+          undefined,
+          dataPath(action.presentation?.[issue.key]),
+        );
+    });
+  definition.footer.buttons?.forEach((button, index) => {
+    for (const issue of validateActionPresentation(button.presentation, data, context))
+      add(
+        '$footer',
+        `$.footer.buttons[${index}].presentation${issue.key ? `.${issue.key}` : ''}`,
+        issue.message,
+        undefined,
+        undefined,
+        dataPath(button.presentation?.[issue.key]),
+      );
+  });
   definition.tabs.forEach((tab, index) => visit(tab.nodes, `$.tabs[${index}].nodes`));
   return issues;
 }

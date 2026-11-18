@@ -16,6 +16,7 @@ export function editorSelection(
           'aria-pressed': selectedId === id,
           onClickCapture: (event: MouseEvent<HTMLElement>) => {
             const target = event.target as HTMLElement;
+            if (typeof target.closest === 'function' && target.closest('[data-editor-drag-handle]')) return;
             if (typeof target.closest === 'function' && target.closest('a[href]')) event.preventDefault();
             event.stopPropagation();
             onSelect(id);

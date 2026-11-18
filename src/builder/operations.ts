@@ -106,10 +106,109 @@ export interface NodeDropTarget {
   containerId: string;
   index: number;
 }
+export interface FieldDropTarget {
+  kind: 'field';
+  ownerId: string;
+  index: number;
+}
+export type EditorDropTarget = NodeDropTarget | FieldDropTarget;
+export const isFieldDropTarget = (target: EditorDropTarget): target is FieldDropTarget =>
+  'kind' in target && target.kind === 'field';
 export interface NodeOperationResult {
   definition: SplitTemplate;
   selectedId?: string;
   error?: string;
+}
+function fieldOwner(definition: SplitTemplate, ownerId: string) {
+  if (ownerId === '$header')
+    return {
+      fields: definition.header.fields ?? [],
+      minimum: 0,
+      maximum: 12,
+      family: 'root-field',
+      label: 'Шапка карточки',
+    };
+  const node = locateNode(definition, ownerId)?.node;
+  if (node?.type === 'fields' || node?.type === 'recordList')
+    return {
+      fields: node.fields,
+      minimum: node.type === 'fields' ? 1 : 0,
+      maximum: 50,
+      // A row-relative binding is meaningful only inside this particular collection.
+      family: node.type === 'recordList' ? `record:${node.id}` : 'root-field',
+      label: node.title,
+    };
+  if (node?.type === 'metrics')
+    return { fields: node.items, minimum: 1, maximum: 12, family: 'metric', label: node.title };
+}
+/** Fields keep ID/source/validation and binding scope. Each record list owns a separate row scope. */
+export function fieldDropContainers(
+  definition: SplitTemplate,
+  fieldId: string,
+): { ownerId: string; label: string; count: number }[] {
+  const source = locateField(definition, fieldId);
+  const family = source && fieldOwner(definition, source.ownerId)?.family;
+  if (!family) return [];
+  const result: { ownerId: string; label: string; count: number }[] = [];
+  const add = (ownerId: string) => {
+    const owner = fieldOwner(definition, ownerId);
+    if (owner?.family === family) result.push({ ownerId, label: owner.label, count: owner.fields.length });
+  };
+  add('$header');
+  const walk = (nodes: ContentNode[]) =>
+    nodes.forEach((node) => {
+      add(node.id);
+      if (node.type === 'section') walk(node.children);
+    });
+  definition.tabs.forEach((tab) => walk(tab.nodes));
+  return result;
+}
+export function moveFieldDefinition(
+  definition: SplitTemplate,
+  fieldId: string,
+  target: FieldDropTarget,
+): NodeOperationResult {
+  const source = locateField(definition, fieldId);
+  const from = source && fieldOwner(definition, source.ownerId);
+  const to = fieldOwner(definition, target.ownerId);
+  if (
+    !source ||
+    !from ||
+    !to ||
+    !Number.isInteger(target.index) ||
+    target.index < 0 ||
+    target.index > to.fields.length
+  )
+    return {
+      definition,
+      error:
+        'Выберите совместимую группу полей. Колонки таблиц переносятся только настройками таблицы, показатели — между группами показателей.',
+    };
+  if (from.family !== to.family)
+    return {
+      definition,
+      error:
+        from.family.startsWith('record:') || to.family.startsWith('record:')
+          ? 'У полей списка свой источник данных. Переставляйте поле внутри этого списка; для карточки или другого списка добавьте новое поле и явно настройте его источник.'
+          : 'Показатели можно переносить только между группами показателей. Для обычной группы добавьте новое поле и настройте его источник отдельно.',
+    };
+  const same = source.ownerId === target.ownerId;
+  const index = same && source.index < target.index ? target.index - 1 : target.index;
+  if (same && index === source.index) return { definition, selectedId: fieldId };
+  if (!same && from.fields.length <= from.minimum)
+    return {
+      definition,
+      error: `В блоке «${from.label}» должно остаться хотя бы одно поле. Сначала добавьте другое поле или перенесите весь блок.`,
+    };
+  if (!same && to.fields.length >= to.maximum)
+    return { definition, error: `В области «${to.label}» можно разместить не больше ${to.maximum} полей.` };
+  const copy = structuredClone(definition);
+  if (target.ownerId === '$header' && !copy.header.fields) copy.header.fields = [];
+  const copiedSource = locateField(copy, fieldId)!;
+  const copiedTarget = fieldOwner(copy, target.ownerId)!;
+  const [moved] = copiedSource.fields.splice(copiedSource.index, 1);
+  copiedTarget.fields.splice(index, 0, moved);
+  return { definition: copy, selectedId: fieldId };
 }
 function containerOf(definition: SplitTemplate, id: string): ContentNode[] | undefined {
   const tab = definition.tabs.find((tab) => tab.id === id);

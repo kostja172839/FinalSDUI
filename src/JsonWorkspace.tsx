@@ -76,7 +76,7 @@ function JsonPane({
         });
       issues.forEach((issue) => list.push({ ...issue, ...jsonPathRange(parsed.tree, issue.path) }));
     } else
-      validateResolvedData(definition, parsed.value).forEach((issue) =>
+      validateResolvedData(definition, parsed.value, undefined, catalog).forEach((issue) =>
         list.push({
           ...issue,
           path: issue.dataPath ?? issue.path,

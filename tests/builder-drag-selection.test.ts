@@ -6,10 +6,12 @@ import {
   locateField,
   locateNode,
   moveContentNode,
+  moveFieldDefinition,
+  fieldDropContainers,
   nodeContainers,
 } from '../src/builder/operations';
 import { editorSelection, fieldSelectionClass } from '../src/runtime/editorSelection';
-import { nextKeyboardDropZone } from '../src/builder/dragAndDrop';
+import { dragPreviewSize, measureDragPreview, nextKeyboardDropZone } from '../src/builder/dragAndDrop';
 
 const text = (id: string): ContentNode => ({
   id,
@@ -181,7 +183,7 @@ test('field capture selects exact IDs without navigating links; public runtime s
     selected = id;
   });
   props.onClickCapture!({
-    target: { closest: () => ({}) },
+    target: { closest: (selector: string) => (selector === 'a[href]' ? {} : null) },
     stopPropagation: () => {
       stopped = true;
     },
@@ -201,6 +203,21 @@ test('field capture selects exact IDs without navigating links; public runtime s
   assert.equal(runtime.role, undefined);
   assert.equal(runtime.tabIndex, undefined);
   assert.equal(fieldSelectionClass('field', 'field'), '');
+  selected = '';
+  stopped = false;
+  prevented = false;
+  props.onClickCapture!({
+    target: { closest: (selector: string) => (selector === '[data-editor-drag-handle]' ? {} : null) },
+    stopPropagation: () => {
+      stopped = true;
+    },
+    preventDefault: () => {
+      prevented = true;
+    },
+  } as never);
+  assert.equal(selected, '');
+  assert.equal(stopped, false);
+  assert.equal(prevented, false);
 });
 
 test('keyboard moves skip original no-op places, deduplicate surfaces, and advance on repeated arrows', () => {
@@ -231,4 +248,194 @@ test('keyboard moves skip original no-op places, deduplicate surfaces, and advan
     'original',
   );
   assert.equal(nextKeyboardDropZone(zones, { ...options, code: 'ArrowDown' })?.id, 'after');
+});
+
+test('drag previews retain the measured frame size rather than the tiny activator dimensions', () => {
+  assert.deepEqual(dragPreviewSize({ width: 562.67, height: 116.79 }, { width: 1280, height: 720 }), {
+    width: 562.67,
+    height: 116.79,
+  });
+  assert.deepEqual(dragPreviewSize({ width: 20, height: 28 }, { width: 1280, height: 720 }), {
+    width: 120,
+    height: 36,
+  });
+  assert.deepEqual(dragPreviewSize({ width: 2000, height: 1800 }, { width: 1280, height: 720 }), {
+    width: 1248,
+    height: 640,
+  });
+  const source = { getBoundingClientRect: () => ({ width: 562.67, height: 116.79 }) as DOMRect };
+  assert.deepEqual(measureDragPreview(source, null, { width: 1280, height: 720 }), {
+    width: 562.67,
+    height: 116.79,
+  });
+  assert.deepEqual(measureDragPreview(source, { width: 20, height: 28 }, { width: 1280, height: 720 }), {
+    width: 562.67,
+    height: 116.79,
+  });
+  assert.equal(measureDragPreview(null, null, { width: 1280, height: 720 }), undefined);
+});
+
+test('small root fields reorder and move through header/root groups with stable IDs and immutable undo state', () => {
+  const source = definition([
+    {
+      id: 'fields',
+      type: 'fields',
+      title: 'Fields',
+      columns: 2,
+      fields: [
+        field('one'),
+        { ...field('two'), validation: { required: true }, source: { kind: 'literal', value: 0 } },
+      ],
+    },
+    {
+      id: 'root-other',
+      type: 'fields',
+      title: 'Root B',
+      columns: 1,
+      fields: [field('root-existing')],
+    },
+  ]);
+  const snapshot = structuredClone(source);
+  const reordered = moveFieldDefinition(source, 'one', { kind: 'field', ownerId: 'fields', index: 2 });
+  assert.deepEqual(
+    locateField(reordered.definition, 'one')?.fields.map((field) => field.id),
+    ['two', 'one'],
+  );
+  const header = moveFieldDefinition(reordered.definition, 'two', {
+    kind: 'field',
+    ownerId: '$header',
+    index: 1,
+  });
+  assert.equal(header.error, undefined);
+  assert.equal(locateField(header.definition, 'two')?.ownerId, '$header');
+  const destination = moveFieldDefinition(header.definition, 'two', {
+    kind: 'field',
+    ownerId: 'root-other',
+    index: 0,
+  });
+  assert.equal(destination.selectedId, 'two');
+  assert.equal(locateField(destination.definition, 'two')?.ownerId, 'root-other');
+  assert.deepEqual(locateField(destination.definition, 'two')?.field, locateField(source, 'two')?.field);
+  assert.deepEqual(source, snapshot);
+});
+
+test('field transfer guards required groups, capacity and metric/table families', () => {
+  const source = definition([
+    { id: 'fields', type: 'fields', title: 'Fields', columns: 1, fields: [field('only')] },
+    {
+      id: 'metric-a',
+      type: 'metrics',
+      title: 'Metrics A',
+      columns: 1,
+      items: [{ ...field('metric-one'), suffix: 'с НДС' }, field('metric-two')],
+    },
+    { id: 'metric-b', type: 'metrics', title: 'Metrics B', columns: 1, items: [field('metric-three')] },
+    {
+      id: 'table',
+      type: 'table',
+      title: 'Table',
+      binding: 'rows',
+      columns: [field('column')],
+      searchable: false,
+      pageSize: 10,
+    },
+  ]);
+  assert.match(
+    moveFieldDefinition(source, 'only', { kind: 'field', ownerId: '$header', index: 0 }).error!,
+    /хотя бы одно/,
+  );
+  assert.equal(
+    moveFieldDefinition(source, 'metric-one', { kind: 'field', ownerId: '$header', index: 0 }).definition,
+    source,
+  );
+  const metric = moveFieldDefinition(source, 'metric-one', { kind: 'field', ownerId: 'metric-b', index: 1 });
+  assert.equal(metric.error, undefined);
+  assert.equal(
+    (locateField(metric.definition, 'metric-one')?.field as FieldDefinition & { suffix: string }).suffix,
+    'с НДС',
+  );
+  assert.deepEqual(fieldDropContainers(source, 'column'), []);
+  assert.equal(
+    moveFieldDefinition(source, 'column', { kind: 'field', ownerId: '$header', index: 0 }).definition,
+    source,
+  );
+  assert.deepEqual(
+    fieldDropContainers(source, 'metric-one').map((owner) => owner.ownerId),
+    ['metric-a', 'metric-b'],
+  );
+  const full = definition([
+    { id: 'fields', type: 'fields', title: 'Fields', columns: 1, fields: [field('one'), field('two')] },
+  ]);
+  full.header.fields = Array.from({ length: 12 }, (_, index) => field(`header-${index}`));
+  assert.match(
+    moveFieldDefinition(full, 'one', { kind: 'field', ownerId: '$header', index: 12 }).error!,
+    /12/,
+  );
+  assert.equal(
+    moveFieldDefinition(full, 'one', { kind: 'field', ownerId: 'missing', index: 0 }).definition,
+    full,
+  );
+  assert.equal(
+    moveFieldDefinition(full, 'one', { kind: 'field', ownerId: 'fields', index: -1 }).definition,
+    full,
+  );
+});
+
+test('field transfer does not silently change root and collection-row binding scopes', () => {
+  const source = definition([
+    {
+      id: 'root-fields',
+      type: 'fields',
+      title: 'Root',
+      columns: 1,
+      fields: [{ ...field('root-amount'), binding: 'entity.amount' }, field('root-other')],
+    },
+    {
+      id: 'row-a',
+      type: 'recordList',
+      title: 'Rows A',
+      columns: 1,
+      binding: 'rowsA',
+      itemTitle: { kind: 'binding', path: 'name' },
+      fields: [{ ...field('row-amount'), binding: 'amount' }, field('row-other')],
+    },
+    {
+      id: 'row-b',
+      type: 'recordList',
+      title: 'Rows B',
+      columns: 1,
+      binding: 'rowsB',
+      itemTitle: { kind: 'binding', path: 'name' },
+      fields: [],
+    },
+  ]);
+  for (const [fieldId, ownerId] of [
+    ['root-amount', 'row-a'],
+    ['row-amount', 'root-fields'],
+    ['row-amount', '$header'],
+    ['row-amount', 'row-b'],
+  ]) {
+    const result = moveFieldDefinition(source, fieldId, { kind: 'field', ownerId, index: 0 });
+    assert.equal(
+      result.definition,
+      source,
+      `${fieldId} → ${ownerId} must preserve the original binding scope`,
+    );
+    assert.match(result.error!, /источник|списк/);
+  }
+  assert.deepEqual(
+    fieldDropContainers(source, 'root-amount').map((owner) => owner.ownerId),
+    ['$header', 'root-fields'],
+  );
+  assert.deepEqual(
+    fieldDropContainers(source, 'row-amount').map((owner) => owner.ownerId),
+    ['row-a'],
+  );
+  const reordered = moveFieldDefinition(source, 'row-amount', { kind: 'field', ownerId: 'row-a', index: 2 });
+  assert.equal(reordered.error, undefined);
+  assert.deepEqual(
+    locateField(reordered.definition, 'row-amount')?.fields.map((field) => field.id),
+    ['row-other', 'row-amount'],
+  );
+  assert.equal(locateField(reordered.definition, 'row-amount')?.field.binding, 'amount');
 });

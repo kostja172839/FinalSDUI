@@ -1,4 +1,4 @@
-/** Stable public SDUI v1 contract. UI-kit props never cross this interface. */
+/** Stable public SDUI contract. Only declarative, validated presentation props cross this interface. */
 export type FieldFormat = 'text' | 'date' | 'money' | 'number' | 'status' | 'person' | 'link';
 export type PreviewScenario = 'normal' | 'long' | 'empty' | 'error';
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -25,6 +25,8 @@ export interface FieldDefinition {
   source?: ValueSource;
   format: FieldFormat;
   validation?: FieldValidation;
+  /** Bounded presentation options; each value may come from the current field/row data scope. */
+  props?: Record<string, ValueSource>;
 }
 export interface FieldValidation {
   required?: boolean;
@@ -49,6 +51,7 @@ export interface VisibilityRule {
 export interface NodeBase {
   id: string;
   title: string;
+  props?: Record<string, ValueSource>;
   visibleWhen?: VisibilityRule;
 }
 export interface FieldsNode extends NodeBase {
@@ -56,10 +59,13 @@ export interface FieldsNode extends NodeBase {
   columns: 1 | 2 | 3;
   fields: FieldDefinition[];
 }
+export type SectionAppearance = 'plain' | 'divider' | 'outlined';
 export interface SectionNode extends NodeBase {
   type: 'section';
   collapsible: boolean;
   defaultOpen: boolean;
+  /** Omitted values preserve the existing separator between adjacent blocks. */
+  appearance?: SectionAppearance;
   children: ContentNode[];
 }
 export interface TextNode extends NodeBase {
@@ -194,6 +200,7 @@ export interface SplitAction extends WidgetInvocation {
   label: string;
   kind: 'openWidget';
   widgetId: string;
+  presentation?: Record<string, ValueSource>;
 }
 /** A button binds to a known client capability; executable code stays in the host. */
 export type ButtonAction =
@@ -206,6 +213,7 @@ export interface FooterButton {
   label: string;
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   action: ButtonAction;
+  presentation?: Record<string, ValueSource>;
 }
 export interface SplitTemplate {
   schemaVersion: 1;

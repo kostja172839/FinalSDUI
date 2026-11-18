@@ -26,7 +26,7 @@
   top: auto;
   bottom: calc(100% + 6px);
 }
-.split-action-popup [role='menuitem'] {
+.split-action-popup [role='menuitem']:not(.ui-button) {
   display: block;
   width: 100%;
   border: 0;
@@ -41,13 +41,45 @@
   cursor: pointer;
   overflow-wrap: anywhere;
 }
-.split-action-popup [role='menuitem']:hover,
-.split-action-popup [role='menuitem']:focus-visible {
+.split-action-popup [role='menuitem']:not(.ui-button):hover,
+.split-action-popup [role='menuitem']:not(.ui-button):focus-visible {
   background: var(--surface-soft, #f4f6f8);
   outline: 0;
 }
 .split-action-popup [role='menuitem']:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent, #216bce);
+}
+.split-action-popup .ui-button[role='menuitem'] {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  margin: 2px 0;
+}
+.split-action-popup [role='menuitem']:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.split-action-reason,
+.split-action-failure {
+  display: block;
+  padding: 3px 12px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.split-action-failure {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  max-width: 280px;
+  z-index: 80;
+  background: var(--surface, #fff);
+  color: var(--danger);
+}
+.split-action-menu--footer .split-action-failure {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 .split-action-popup {
   max-height: min(360px, calc(100vh - 96px));

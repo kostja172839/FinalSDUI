@@ -69,32 +69,38 @@ export function canonicalizeDefinition(definition: SplitTemplate): SplitTemplate
   const source = (value?: ValueSource) => {
     if (value?.kind === 'binding') value.path = path(value.path);
   };
-  const bound = (value: { binding: string; source?: ValueSource }) => {
+  const bound = (value: { binding: string; source?: ValueSource; props?: Record<string, ValueSource> }) => {
     value.binding = path(value.binding);
     source(value.source);
+    Object.values(value.props ?? {}).forEach(source);
   };
   const invocation = (value: WidgetInvocation) => Object.values(value.props ?? {}).forEach(source);
+  const presentation = (value: { presentation?: Record<string, ValueSource> }) =>
+    Object.values(value.presentation ?? {}).forEach(source);
   for (const key of ['title', 'subtitle', 'status'] as const) {
     copy.header[`${key}Binding`] = path(copy.header[`${key}Binding`]);
     source(copy.header[`${key}Source`]);
   }
   copy.header.fields?.forEach(bound);
-  copy.header.actions?.forEach(invocation);
-  copy.footer.actions?.forEach(invocation);
-  copy.footer.buttons?.forEach(({ action }) => {
+  copy.header.actions?.forEach((action) => { invocation(action); presentation(action); });
+  copy.footer.actions?.forEach((action) => { invocation(action); presentation(action); });
+  copy.footer.buttons?.forEach((button) => {
+    presentation(button);
+    const { action } = button;
     if (action.kind === 'openWidget') invocation(action);
     else if (action.kind === 'host') Object.values(action.params ?? {}).forEach(source);
   });
   const visit = (nodes: ContentNode[]) =>
     nodes.forEach((node) => {
+      invocation(node);
       if (node.visibleWhen) node.visibleWhen.binding = path(node.visibleWhen.binding);
       if (node.type === 'fields') node.fields.forEach(bound);
       else if (node.type === 'metrics') node.items.forEach(bound);
       else if (node.type === 'section') visit(node.children);
-      else if (node.type === 'widget') invocation(node);
-      else if (node.type === 'erpTable') {
+      else if (node.type === 'widget') {
+        /* Invocation sources are normalized for every node above. */
+      } else if (node.type === 'erpTable') {
         source(node.tableUrl);
-        invocation(node);
       } else if (node.type === 'badge' || node.type === 'progress') source(node.value);
       else if (node.type === 'avatar') {
         source(node.name);
@@ -104,7 +110,10 @@ export function canonicalizeDefinition(definition: SplitTemplate): SplitTemplate
         source(node.alt);
       } else if ('binding' in node) {
         bound(node);
-        if (node.type === 'documents' && node.action) invocation(node.action);
+        if (node.type === 'documents' && node.action) {
+          invocation(node.action);
+          presentation(node.action);
+        }
       }
     });
   copy.tabs.forEach((tab) => visit(tab.nodes));
