@@ -5,6 +5,7 @@ import { seedTemplates } from '../shared/seeds';
 import { canonicalizeDefinition } from '../shared/values';
 import { validateTemplate } from '../shared/validation';
 import { validateResolvedData } from '../shared/data-validation';
+import { connectExpensesDemo } from '../src/demo/erp-table-examples';
 import {
   createErpTableCallbacks,
   resolveErpTableInput,
@@ -264,4 +265,36 @@ test('resolved-data validation catches ERP URL and filters from API and accepts 
     context,
   ).filter((issue) => issue.nodeId === 'registry');
   assert.deepEqual(valid, []);
+});
+
+test('ERP expense constructor example reaches native table props and keeps unrelated dynamic values', () => {
+  const node: ErpTableNode = {
+    id: 'expense-table',
+    type: 'erpTable',
+    title: 'ERP',
+    height: 420,
+    tableUrl: { kind: 'literal', value: '' },
+    props: {
+      'customParams.mode': { kind: 'literal', value: 'old' },
+      'mfAdditionalProps.recordId': { kind: 'binding', path: 'entity.id' },
+    },
+  };
+  const example = connectExpensesDemo(node);
+  const input = resolveErpTableInput(
+    example,
+    { entity: { id: 'demo-entity' } },
+    { entityId: 'demo-entity', entityType: 'expense', instanceId: 'preview', locale: 'ru-RU' },
+  );
+  assert.equal(input.data.tableUrl, '/api/demo/erp-table/expenses');
+  assert.deepEqual(input.data.customParams, { mode: 'approve', accountingTemplateCode: 'DEMO_TRAVEL' });
+  assert.deepEqual(input.data.defaultQueryFiltres, [
+    {
+      predicateHighLevel: 'AND',
+      fieldName: 'reportId',
+      search: ['demo-report-001'],
+      predicateLowLevel: 'EQ',
+    },
+  ]);
+  assert.deepEqual(input.data.mfAdditionalProps, { recordId: 'demo-entity' });
+  assert.equal(node.title, 'ERP');
 });

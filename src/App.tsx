@@ -59,7 +59,7 @@ import { ExternalWidgetHost } from './runtime/connector';
 import { demoWidgetRegistry } from './runtime/widgets';
 import { canonicalizeDefinition } from '../shared/values';
 import { contractExampleDefinition, contractExampleData } from '../shared/seeds';
-import { demoErpTableAdapter } from './demo/ErpTableDemo';
+import type { ErpTableAdapter } from './runtime/erp-table';
 import { connectExpensesDemo } from './demo/erp-table-examples';
 
 const JsonWorkspace = lazy(() => import('./JsonWorkspace'));
@@ -145,7 +145,11 @@ function findNode(nodes: ContentNode[], type: ContentNode['type']): ContentNode 
   }
 }
 
-export default function App() {
+export interface AppProps {
+  erpTableAdapter?: ErpTableAdapter;
+}
+
+export default function App({ erpTableAdapter }: AppProps = {}) {
   const [catalog, setCatalog] = useState<Catalog>();
   const [records, setRecords] = useState<TemplateRecord[]>([]);
   const [entities, setEntities] = useState<EntitySummary[]>([]);
@@ -655,7 +659,7 @@ export default function App() {
             actionHandlers={actionHandlers}
             actionDescriptors={catalog.actions}
             tableRefreshToken={refreshEpoch}
-            erpTableAdapter={demoErpTableAdapter}
+            erpTableAdapter={erpTableAdapter}
           />
         ) : !opened ? (
           <div className="preview-error">
@@ -1056,7 +1060,7 @@ export default function App() {
                           actionHandlers={actionHandlers}
                           actionDescriptors={catalog.actions}
                           tableRefreshToken={refreshEpoch}
-                          erpTableAdapter={demoErpTableAdapter}
+                          erpTableAdapter={erpTableAdapter}
                         />
                       )
                     )}

@@ -104,15 +104,15 @@ export function ErpTableEditor({
             onChange({ ...node, tableUrl: { kind: 'literal', value: '/api/demo/erp-table/product-events' } })
           }
         >
-          Подключить демо API
+          Пример: продуктовые события
         </Button>
       )}
       <Button size="sm" onClick={() => onChange(connectExpensesDemo(node))}>
         Пример: расходы по отчёту
       </Button>
       <p className="builder-property-copy">
-        Демосервер возвращает метаданные и строки по контракту ERP-таблицы. Фильтры, сортировка и страницы
-        загружаются HTTP-запросами. Для интеграции с рабочим API подключите приватный ErpTableWidget.
+        Демо API и данные подготовлены для ErpTableWidget. Кнопки примеров заполняют адрес и параметры.
+        Таблица появится после подключения вашего компонента в приложении.
       </p>
       <Input
         label="Высота блока, px"

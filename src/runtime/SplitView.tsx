@@ -9,28 +9,14 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
-import { Accordion, AccordionItem, Badge, Table, Tabs, TabItem } from '@salutejs/sdds-finai';
-import {
-  AlertCircle,
-  ArrowUpRight,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Maximize2,
-  Minimize2,
-  Puzzle,
-  RefreshCw,
-  Search,
-  X,
-} from 'lucide-react';
+import { Accordion, AccordionItem, Badge, Tabs, TabItem } from '@salutejs/sdds-finai';
+import { AlertCircle, ArrowUpRight, Maximize2, Minimize2, Puzzle, RefreshCw, X } from 'lucide-react';
 import type {
   ContentNode,
   FieldDefinition,
   FieldFormat,
   OpenWidgetIntent,
   ResolvedSplit,
-  TableNode,
   WidgetContext,
   WidgetMount,
   WidgetNode,
@@ -39,7 +25,7 @@ import type {
   HostActionRegistry,
   HostActionDescriptor,
 } from '../../shared/model';
-import { Button, IconButton, Input } from '../ui';
+import { Button, IconButton } from '../ui';
 import { displayText, isVisible, safeHref } from './bindings';
 import { resolveValue, resolveWidgetInput } from '../../shared/values';
 import { validateResolvedData, validateFieldValue, isValidDateValue } from '../../shared/data-validation';
@@ -260,186 +246,6 @@ export function WidgetHost({
   );
 }
 
-function ReadOnlyTable({
-  node,
-  data,
-  selectedNodeId,
-  onSelectNode,
-}: {
-  node: TableNode;
-  data: Record<string, unknown>;
-  selectedNodeId?: string;
-  onSelectNode?: (id: string) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(0);
-  const [sort, setSort] = useState<{ binding: string; desc: boolean } | null>(null);
-  const source = resolveValue(data, node.source, node.binding);
-  const rows = Array.isArray(source)
-    ? source.filter(
-        (row): row is Record<string, unknown> =>
-          row !== null && typeof row === 'object' && !Array.isArray(row),
-      )
-    : [];
-  const invalidRows = Array.isArray(source) ? source.length - rows.length : 0;
-  const filtered = useMemo(() => {
-    const result = rows.filter(
-      (row) =>
-        !node.searchable ||
-        node.columns.some((column) =>
-          displayText(resolveValue(row, column.source, column.binding))
-            .toLocaleLowerCase('ru')
-            .includes(query.toLocaleLowerCase('ru')),
-        ),
-    );
-    if (sort)
-      result.sort((a, b) => {
-        const column = node.columns.find((item) => item.id === sort.binding);
-        const av = resolveValue(a, column?.source, column?.binding),
-          bv = resolveValue(b, column?.source, column?.binding);
-        const compared =
-          typeof av === 'number' && typeof bv === 'number'
-            ? av - bv
-            : displayText(av).localeCompare(displayText(bv), 'ru', { numeric: true });
-        return sort.desc ? -compared : compared;
-      });
-    return result;
-  }, [rows, query, sort, node.columns, node.searchable]);
-  const pageSize = Math.max(1, node.pageSize);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount - 1);
-  const tableData = filtered.slice(safePage * pageSize, (safePage + 1) * pageSize).map((row, index) => {
-    const item: { id: string; [key: string]: string | number | object } = { id: String(row.id ?? index) };
-    node.columns.forEach((column) => {
-      item[`cell_${column.id}`] = { raw: resolveValue(row, column.source, column.binding) };
-    });
-    return item;
-  });
-  return (
-    <div className="records-table">
-      <div className="table-heading">
-        <h3>{node.title}</h3>
-        <span>{rows.length} записей</span>
-      </div>
-      {source !== undefined && source !== null && !Array.isArray(source) && (
-        <p className="block-error" role="alert">
-          Источник таблицы должен содержать список объектов. Проверьте путь к данным.
-        </p>
-      )}
-      {invalidRows > 0 && (
-        <p className="runtime-note" role="status">
-          Пропущено строк с некорректными данными: {invalidRows}. Каждая строка должна быть объектом.
-        </p>
-      )}
-      {node.searchable && (
-        <div className="table-search">
-          <Search size={16} />
-          <Input
-            aria-label={`Поиск: ${node.title}`}
-            placeholder="Поиск по записям"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(0);
-            }}
-          />
-        </div>
-      )}
-      <div className="table-sort">
-        <span>Сортировать:</span>
-        {node.columns.map((column) => (
-          <button
-            type="button"
-            key={column.id}
-            aria-pressed={sort?.binding === column.id}
-            onClick={() => {
-              setSort({
-                binding: column.id,
-                desc: sort?.binding === column.id ? !sort.desc : false,
-              });
-              setPage(0);
-            }}
-          >
-            {column.label}
-            {sort?.binding === column.id ? (sort.desc ? ' ↓' : ' ↑') : ''}
-          </button>
-        ))}
-      </div>
-      {tableData.length ? (
-        <div className="fin-table-scroll">
-          <div style={{ minWidth: node.columns.length * 170 }}>
-            <Table
-              size="s"
-              borderVariant="rows"
-              data={tableData}
-              columns={node.columns.map((column) => ({
-                id: `cell_${column.id}`,
-                label: column.label,
-                width: column.format === 'status' ? 180 : 200,
-                enableResizing: true,
-                enableEditing: false,
-                renderCell: (value: unknown) => (
-                  <div
-                    {...editorSelection(column.id, column.label, selectedNodeId, onSelectNode)}
-                    className={fieldSelectionClass(column.id, selectedNodeId, onSelectNode)}
-                  >
-                    <FormattedValue value={(value as { raw: unknown }).raw} format={column.format} />
-                    <div className="runtime-field-errors">
-                      {validateFieldValue(column, (value as { raw: unknown }).raw).map((message) => (
-                        <p key={message}>{message}</p>
-                      ))}
-                    </div>
-                  </div>
-                ),
-              }))}
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="runtime-empty">
-          {query && node.searchable ? 'По вашему запросу ничего не найдено' : 'Связанных записей пока нет'}
-        </div>
-      )}
-      <div className="table-pagination">
-        <span>
-          {filtered.length
-            ? `${safePage * pageSize + 1}–${Math.min((safePage + 1) * pageSize, filtered.length)} из ${filtered.length}`
-            : '0 записей'}
-        </span>
-        <div>
-          <IconButton label="Первая страница" disabled={safePage === 0} onClick={() => setPage(0)}>
-            <ChevronsLeft size={16} />
-          </IconButton>
-          <IconButton
-            label="Предыдущая страница"
-            disabled={safePage === 0}
-            onClick={() => setPage(safePage - 1)}
-          >
-            <ChevronLeft size={16} />
-          </IconButton>
-          <span>
-            {safePage + 1} / {pageCount}
-          </span>
-          <IconButton
-            label="Следующая страница"
-            disabled={safePage === pageCount - 1}
-            onClick={() => setPage(safePage + 1)}
-          >
-            <ChevronRight size={16} />
-          </IconButton>
-          <IconButton
-            label="Последняя страница"
-            disabled={safePage === pageCount - 1}
-            onClick={() => setPage(pageCount - 1)}
-          >
-            <ChevronsRight size={16} />
-          </IconButton>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 interface RenderContext {
   document: ResolvedSplit;
   registry: WidgetRegistry;
@@ -579,12 +385,11 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
         break;
       case 'table':
         content = (
-          <ReadOnlyTable
-            node={node}
-            data={data}
-            selectedNodeId={context.selectedNodeId}
-            onSelectNode={context.onSelectNode}
-          />
+          <div className="runtime-empty">
+            <h3>{node.title}</h3>
+            <p>Для таблицы требуется ErpTableWidget</p>
+            <span>Замените этот старый блок на ERP-таблицу и укажите tableUrl в её свойствах.</span>
+          </div>
         );
         break;
       case 'erpTable':
