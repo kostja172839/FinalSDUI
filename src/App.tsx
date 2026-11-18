@@ -59,6 +59,7 @@ import { ExternalWidgetHost } from './runtime/connector';
 import { demoWidgetRegistry } from './runtime/widgets';
 import { canonicalizeDefinition } from '../shared/values';
 import { contractExampleDefinition, contractExampleData } from '../shared/seeds';
+import { demoErpTableAdapter } from './demo/ErpTableDemo';
 
 const JsonWorkspace = lazy(() => import('./JsonWorkspace'));
 
@@ -247,7 +248,7 @@ export default function App() {
       ) ??
       createNode(componentType, catalog);
     if (selected.type === 'erpTable' && selected.tableUrl.kind === 'literal' && !selected.tableUrl.value)
-      selected = { ...selected, tableUrl: { kind: 'literal', value: '/api/table/example' } };
+      selected = { ...selected, tableUrl: { kind: 'literal', value: '/demo/erp-table' } };
     return {
       ...definition,
       header: {
@@ -653,6 +654,7 @@ export default function App() {
             actionHandlers={actionHandlers}
             actionDescriptors={catalog.actions}
             tableRefreshToken={refreshEpoch}
+            erpTableAdapter={demoErpTableAdapter}
           />
         ) : !opened ? (
           <div className="preview-error">
@@ -1053,6 +1055,7 @@ export default function App() {
                           actionHandlers={actionHandlers}
                           actionDescriptors={catalog.actions}
                           tableRefreshToken={refreshEpoch}
+                          erpTableAdapter={demoErpTableAdapter}
                         />
                       )
                     )}

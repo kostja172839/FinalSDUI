@@ -1,5 +1,5 @@
 import type { Catalog, ErpTableNode, ErpTableOptions, WidgetDescriptor } from '../../shared/model';
-import { Input, Select, Toggle } from '../ui';
+import { Button, Input, Select, Toggle } from '../ui';
 import { ValueSourceEditor } from './ValueSourceEditor';
 import { WidgetInvocationEditor } from './WidgetInvocationEditor';
 
@@ -96,6 +96,18 @@ export function ErpTableEditor({
         hint="Адрес, который ожидает ErpTableWidget, например /api/table/registry. Метаданные и строки загружает сам компонент."
         onChange={(tableUrl) => onChange({ ...node, tableUrl })}
       />
+      {node.tableUrl.kind === 'literal' && !node.tableUrl.value && (
+        <Button
+          size="sm"
+          onClick={() => onChange({ ...node, tableUrl: { kind: 'literal', value: '/demo/erp-table' } })}
+        >
+          Посмотреть с мок-данными
+        </Button>
+      )}
+      <p className="builder-property-copy">
+        В этом демоприложении показаны локальные mockMeta и mockData по контракту ERP-таблицы. Запросы по
+        tableUrl здесь не выполняются. Для интеграции укажите рабочий адрес и подключите ErpTableWidget.
+      </p>
       <Input
         label="Высота блока, px"
         path="height"
