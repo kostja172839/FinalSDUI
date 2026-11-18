@@ -1,5 +1,5 @@
 /**
- * Minimal projection of the user-provided ERP metadata/rows contracts for a local demo.
+ * Projection of the supplied ERP contracts, including nullable values observed on the wire.
  * Original field names and value shapes are retained; this is not the private SDK or its full source.
  */
 export interface ArrayObjectItem {
@@ -11,9 +11,9 @@ export interface IField {
   value: string | string[] | ArrayObjectItem[] | null;
   subValue?: string | null;
   entityName?: string | null;
-  label?: string;
-  badgeId?: string;
-  iconId?: string;
+  label?: string | null;
+  badgeId?: string | null;
+  iconId?: string | null;
   indicatorId?: string;
   clickActionId?: string;
   descriptionIconValues?: { value?: string }[];
@@ -25,7 +25,8 @@ export interface IRow {
 }
 export interface IPage {
   offset: number;
-  limit: number;
+  /** The supplied wire response may omit the effective size as null; retain the requested size in UI state. */
+  limit: number | null;
   count: number;
   totalElements: number;
 }
@@ -41,7 +42,19 @@ export interface IData {
   rows?: IRow[];
   page: IPage;
   aggregateRowData?: IAggregateRowData[];
-  additionalInfo?: IAddInfo[];
+  additionalInfo?: IAddInfo[] | null;
+}
+/** Sort shape supplied in the real table request. */
+export interface ErpSortParam {
+  sortParam: string;
+  sortType: 'ASC' | 'DESC';
+}
+/** Original filter shape supplied alongside the real table request. */
+export interface FilterParam {
+  predicateHighLevel: 'AND' | 'OR' | 'NOT';
+  fieldName: string;
+  search: (string | null)[];
+  predicateLowLevel: 'LIKE' | 'EQ' | 'IN' | 'BETWEEN' | 'GT' | 'LT';
 }
 export interface IRowData {
   data: IData;

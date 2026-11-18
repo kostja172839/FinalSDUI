@@ -60,7 +60,7 @@ test('ERP cells use declared types, display arrayObject.value, subValue and badg
     );
   assert.equal(cell('eventNumber').text, 'ПС-2026-0001');
   assert.equal(cell('occurredAt').text, '16.11.2026');
-  assert.equal(cell('amount').text.replace(/\s/g, ''), '1200000,50₽');
+  assert.equal(cell('amount').text.replace(/\s/g, ''), '1200000,50');
   assert.equal(cell('participants').text, 'Анна Сергеева, Михаил Лебедев');
   assert.equal(cell('participants').text.includes('demo-employee'), false);
   assert.equal(cell('tags').text, 'Плановое, Бухгалтерский учёт');
@@ -82,6 +82,31 @@ test('ERP cells use declared types, display arrayObject.value, subValue and badg
   );
   assert.equal(unmapped.badge, undefined);
   assert.equal(unmapped.text, 'Проведено');
+});
+
+test('ERP money formatting keeps currency in explicit metadata or separate fields', () => {
+  const meta: IMetaDataResponse = {
+    data: {
+      metadata: [
+        { fieldName: 'amount', fieldTitle: 'Сумма', type: 'money', position: 1 },
+        { fieldName: 'currencyLetterCode', fieldTitle: 'Валюта', type: 'string', position: 2 },
+      ],
+    },
+  };
+  const row = {
+    fields: [
+      { fieldName: 'amount', value: '300' },
+      { fieldName: 'currencyLetterCode', value: 'EUR' },
+    ],
+  };
+  const [amount, currency] = projectErpColumns(meta);
+  assert.equal(resolveErpCell(row, amount, meta).text, '300,00');
+  assert.equal(resolveErpCell(row, currency, meta).text, 'EUR');
+  assert.equal(amount.title, 'Сумма');
+
+  meta.data!.metadata![0].fieldTitle = 'Сумма, €';
+  assert.equal(projectErpColumns(meta)[0].title, 'Сумма, €');
+  assert.equal(resolveErpCell(row, projectErpColumns(meta)[0], meta).text, '300,00');
 });
 
 test('ERP local view searches displayed values, keeps source keys across sort/page and never mutates fixtures', () => {

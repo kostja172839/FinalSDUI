@@ -60,6 +60,7 @@ import { demoWidgetRegistry } from './runtime/widgets';
 import { canonicalizeDefinition } from '../shared/values';
 import { contractExampleDefinition, contractExampleData } from '../shared/seeds';
 import { demoErpTableAdapter } from './demo/ErpTableDemo';
+import { connectExpensesDemo } from './demo/erp-table-examples';
 
 const JsonWorkspace = lazy(() => import('./JsonWorkspace'));
 
@@ -248,7 +249,7 @@ export default function App() {
       ) ??
       createNode(componentType, catalog);
     if (selected.type === 'erpTable' && selected.tableUrl.kind === 'literal' && !selected.tableUrl.value)
-      selected = { ...selected, tableUrl: { kind: 'literal', value: '/demo/erp-table' } };
+      selected = connectExpensesDemo(selected);
     return {
       ...definition,
       header: {

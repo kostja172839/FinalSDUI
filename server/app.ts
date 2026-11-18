@@ -10,6 +10,7 @@ import type { Catalog, EntitySummary, PreviewScenario, SplitTemplate, TemplateRe
 import { isJsonValue } from '../shared/values';
 import { TemplateStore } from './store';
 import { ApiError, resolveSplit, type EntityData } from './resolve';
+import { handleErpTableDemo } from './erp-table-demo';
 
 export interface ServerOptions {
   dataDir?: string;
@@ -135,6 +136,7 @@ export function createHandler(options: ServerOptions = {}) {
       const rawPath = (req.url ?? '/').split('?')[0];
       const pathname = decodeURIComponent(rawPath);
       const method = req.method ?? 'GET';
+      if (await handleErpTableDemo(req, res, pathname, body, json)) return;
       if (pathname === '/api/health' && method === 'GET')
         return json(res, 200, { status: 'ok', mode: 'read-only' });
       if (pathname === '/api/catalog' && method === 'GET') return json(res, 200, catalog);

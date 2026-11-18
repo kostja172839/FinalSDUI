@@ -3,6 +3,27 @@
   display: grid;
   gap: 12px;
 }
+.erp-demo-loading,
+.erp-demo-request-error {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px;
+  background: var(--surface-soft);
+  border-radius: 8px;
+}
+.erp-demo-request-error {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.erp-demo-request-error p {
+  flex-basis: 100%;
+  text-align: center;
+  margin: 0;
+}
 .erp-demo-notice {
   display: grid;
   gap: 4px;

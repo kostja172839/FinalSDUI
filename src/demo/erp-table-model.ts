@@ -127,7 +127,7 @@ export function resolveErpCell(row: IRow, column: DemoErpColumn, meta: IMetaData
       text = new Intl.NumberFormat(
         'ru-RU',
         column.type === 'money'
-          ? { style: 'currency', currency: 'RUB', minimumFractionDigits: 2, maximumFractionDigits: 2 }
+          ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
           : { maximumFractionDigits: 12 },
       ).format(number);
     else if (column.type === 'date' || column.type === 'datetime')

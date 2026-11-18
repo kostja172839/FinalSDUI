@@ -2,6 +2,7 @@ import type { Catalog, ErpTableNode, ErpTableOptions, WidgetDescriptor } from '.
 import { Button, Input, Select, Toggle } from '../ui';
 import { ValueSourceEditor } from './ValueSourceEditor';
 import { WidgetInvocationEditor } from './WidgetInvocationEditor';
+import { connectExpensesDemo } from '../demo/erp-table-examples';
 
 const descriptor: WidgetDescriptor = {
   id: 'erp-table',
@@ -99,14 +100,19 @@ export function ErpTableEditor({
       {node.tableUrl.kind === 'literal' && !node.tableUrl.value && (
         <Button
           size="sm"
-          onClick={() => onChange({ ...node, tableUrl: { kind: 'literal', value: '/demo/erp-table' } })}
+          onClick={() =>
+            onChange({ ...node, tableUrl: { kind: 'literal', value: '/api/demo/erp-table/product-events' } })
+          }
         >
-          Посмотреть с мок-данными
+          Подключить демо API
         </Button>
       )}
+      <Button size="sm" onClick={() => onChange(connectExpensesDemo(node))}>
+        Пример: расходы по отчёту
+      </Button>
       <p className="builder-property-copy">
-        В этом демоприложении показаны локальные mockMeta и mockData по контракту ERP-таблицы. Запросы по
-        tableUrl здесь не выполняются. Для интеграции укажите рабочий адрес и подключите ErpTableWidget.
+        Демосервер возвращает метаданные и строки по контракту ERP-таблицы. Фильтры, сортировка и страницы
+        загружаются HTTP-запросами. Для интеграции с рабочим API подключите приватный ErpTableWidget.
       </p>
       <Input
         label="Высота блока, px"
