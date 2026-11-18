@@ -7,7 +7,7 @@ import { createServer } from '../server/app';
 import { ERP_TABLE_DEMO_API_BASE, ERP_EXPENSES_DEMO_API_BASE } from '../server/erp-table-demo';
 import { erpTableMockData, erpTableMockMeta } from '../src/demo/erp-table-fixture';
 import { erpExpensesMockData } from '../src/demo/erp-expenses-fixture';
-import type { FilterParam, IRow, IRowData } from '../src/demo/erp-table-types';
+import type { FilterParam, IMetaDataResponse, IRow, IRowData } from '../src/demo/erp-table-types';
 
 async function withServer(run: (origin: string, server: ReturnType<typeof createServer>) => Promise<void>) {
   const directory = await mkdtemp(path.join(tmpdir(), 'sdui-erp-api-'));
@@ -81,6 +81,7 @@ test('expense source accepts contextual query names and filters report scope wit
           column.fieldName === 'reportId' && column.isHideAlways,
       ),
     );
+    checkExpensesMetadata(meta.data as IMetaDataResponse);
     const rows = await post(
       `${base}?mode=demo-approve&accounting-template-code=DEMO_TRAVEL&delay=0`,
       requestBody([scope()], 2, 3),
@@ -100,6 +101,24 @@ test('expense source accepts contextual query names and filters report scope wit
     assert.deepEqual(beyond.data.data.page, { offset: 100, limit: null, count: 0, totalElements: 8 });
   });
 });
+
+function checkExpensesMetadata({ data }: IMetaDataResponse) {
+  assert.equal(data?.tableApiVersion, '3.7');
+  assert.deepEqual(data.actions, []);
+  assert.equal(data.isGlobalEditable, false);
+  assert.equal(data.isGlobalSortingEnabled, true);
+  assert.equal(Object.hasOwn(data, 'isGlobalPaginationEnabled'), false);
+  const columns = data.metadata ?? [];
+  const status = columns.find((column) => column.fieldName === 'statusName');
+  assert.equal(status?.position, 0);
+  assert.equal(status?.filterType, 'multiselect');
+  const main = columns.filter((column) => column.isMain);
+  assert.deepEqual(main.map((column) => column.fieldName), ['id']);
+  assert.equal(main[0].isHideAlways, true);
+  assert.equal(main[0].sortType, null);
+  assert.equal(main[0].filterType, null);
+  assert.deepEqual(columns.map((column) => column.position), columns.map((_, index) => index));
+}
 
 test('flat demo AND report scope cannot be bypassed by OR search filters and NOT excludes matching rows', async () => {
   await withServer(async (origin) => {

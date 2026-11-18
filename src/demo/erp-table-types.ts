@@ -68,13 +68,18 @@ export interface IMetaDataItem {
   type?: 'number' | 'string' | 'date' | 'datetime' | 'money' | 'boolean' | 'array' | 'arrayObject' | null;
   minimalWidth?: number | null;
   columnSize?: 'XXS' | 'XS' | 'S' | 'M' | 'L' | 'XL';
+  filterType?: 'string' | 'select' | 'multiselect' | 'date' | 'time' | 'money' | null;
+  sortType?: 'ASC' | 'DESC' | null;
+  clickActionId?: string | null;
   isEditable?: boolean | null;
   isFilterSort?: boolean | null;
   isMain?: boolean | null;
   isHideAvailable?: boolean | null;
+  isPinnedByDefault?: boolean | null;
   isHideByDefault?: boolean | null;
   isWrapEnabled?: boolean | null;
   isHideAlways?: boolean;
+  isEnableSwitchVisibility?: boolean;
   isTechnicalField?: unknown;
   isHideValue?: boolean | null;
   fieldTooltip?: string | null;
@@ -90,6 +95,14 @@ export interface IBadges {
   customBackgroundColor?: string | null;
 }
 export interface RawMetadata {
+  tableApiVersion?: string;
+  isRowURLEnabled?: boolean;
+  isShowSideCalendar?: boolean;
+  sideCalendarRowId?: string | null;
+  aggregateRowPosition?: 'top' | 'bottom' | null;
+  isGlobalEditable?: boolean | null;
+  isGlobalMultiselectionEnabled?: boolean | null;
+  isGlobalPinEnabled?: boolean | null;
   isGlobalFilteringEnabled?: boolean | null;
   isGlobalSortingEnabled?: boolean | null;
   isGlobalRowSizeChangingEnabled?: boolean | null;
@@ -102,6 +115,7 @@ export interface RawMetadata {
   emptyTableDescription?: string | null;
   metadata?: IMetaDataItem[] | null;
   badges?: IBadges[] | null;
+  actions?: { actionId?: string | null; actionName?: string | null }[] | null;
 }
 export interface IMetaDataResponse {
   data?: RawMetadata | null;
