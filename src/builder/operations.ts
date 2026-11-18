@@ -8,21 +8,29 @@ export function locateNode(
   definition: SplitTemplate,
   id: string,
 ):
-  | { node: ContentNode; siblings: ContentNode[]; index: number; tab: TabDefinition; path: string }
+  | {
+      node: ContentNode;
+      siblings: ContentNode[];
+      index: number;
+      tab: TabDefinition;
+      path: string;
+      containerId: string;
+    }
   | undefined {
   for (const [tabIndex, tab] of definition.tabs.entries()) {
-    const walk = (nodes: ContentNode[], path: string): ReturnType<typeof locateNode> => {
+    const walk = (nodes: ContentNode[], path: string, containerId: string): ReturnType<typeof locateNode> => {
       for (let index = 0; index < nodes.length; index++) {
         const node = nodes[index];
-        if (node.id === id) return { node, siblings: nodes, index, tab, path: `${path}[${index}]` };
+        if (node.id === id)
+          return { node, siblings: nodes, index, tab, path: `${path}[${index}]`, containerId };
         if (node.type === 'section') {
-          const result = walk(node.children, `${path}[${index}].children`);
+          const result = walk(node.children, `${path}[${index}].children`, node.id);
           if (result) return result;
         }
       }
       return undefined;
     };
-    const result = walk(tab.nodes, `$.tabs[${tabIndex}].nodes`);
+    const result = walk(tab.nodes, `$.tabs[${tabIndex}].nodes`, tab.id);
     if (result) return result;
   }
   return undefined;
@@ -35,6 +43,189 @@ export function changeDefinition(
   const copy = structuredClone(definition);
   change(copy);
   return copy;
+}
+
+export interface FieldLocation {
+  field: FieldDefinition;
+  fields: FieldDefinition[];
+  index: number;
+  ownerId: string;
+  node?: ContentNode;
+  tab?: TabDefinition;
+  path: string;
+  collection: 'fields' | 'items' | 'columns';
+}
+export function locateField(definition: SplitTemplate, id: string): FieldLocation | undefined {
+  const headerIndex = definition.header.fields?.findIndex((field) => field.id === id) ?? -1;
+  if (headerIndex >= 0)
+    return {
+      field: definition.header.fields![headerIndex],
+      fields: definition.header.fields!,
+      index: headerIndex,
+      ownerId: '$header',
+      path: `$.header.fields[${headerIndex}]`,
+      collection: 'fields',
+    };
+  for (const tab of definition.tabs) {
+    const walk = (nodes: ContentNode[]): FieldLocation | undefined => {
+      for (const node of nodes) {
+        const collection =
+          node.type === 'fields' || node.type === 'recordList'
+            ? 'fields'
+            : node.type === 'metrics'
+              ? 'items'
+              : node.type === 'table'
+                ? 'columns'
+                : undefined;
+        if (collection) {
+          const fields = (node as unknown as Record<string, FieldDefinition[]>)[collection];
+          const index = fields.findIndex((field) => field.id === id);
+          if (index >= 0)
+            return {
+              field: fields[index],
+              fields,
+              index,
+              ownerId: node.id,
+              node,
+              tab,
+              path: `${locateNode(definition, node.id)!.path}.${collection}[${index}]`,
+              collection,
+            };
+        }
+        if (node.type === 'section') {
+          const found = walk(node.children);
+          if (found) return found;
+        }
+      }
+    };
+    const found = walk(tab.nodes);
+    if (found) return found;
+  }
+}
+export interface NodeDropTarget {
+  containerId: string;
+  index: number;
+}
+export interface NodeOperationResult {
+  definition: SplitTemplate;
+  selectedId?: string;
+  error?: string;
+}
+function containerOf(definition: SplitTemplate, id: string): ContentNode[] | undefined {
+  const tab = definition.tabs.find((tab) => tab.id === id);
+  if (tab) return tab.nodes;
+  const located = locateNode(definition, id);
+  return located?.node.type === 'section' ? located.node.children : undefined;
+}
+function subtreeIds(node: ContentNode): string[] {
+  return [node.id, ...(node.type === 'section' ? node.children.flatMap(subtreeIds) : [])];
+}
+function validateArrangement(definition: SplitTemplate): string | undefined {
+  let total = 0;
+  const walk = (nodes: ContentNode[], depth: number): boolean => {
+    if (!nodes.length) return true;
+    if (depth > 8 || nodes.length > 100) return false;
+    for (const node of nodes) {
+      if (++total > 200) return false;
+      if (node.type === 'section' && !walk(node.children, depth + 1)) return false;
+    }
+    return true;
+  };
+  return definition.tabs.every((tab) => walk(tab.nodes, 1))
+    ? undefined
+    : 'Нельзя разместить блок: максимум 8 уровней, 100 блоков в контейнере и 200 блоков в карточке.';
+}
+/** Move by stable ID; destination index is measured before removal. Failed operations are immutable no-ops. */
+export function moveContentNode(
+  definition: SplitTemplate,
+  nodeId: string,
+  target: NodeDropTarget,
+): NodeOperationResult {
+  const source = locateNode(definition, nodeId);
+  const destination = containerOf(definition, target.containerId);
+  if (
+    !source ||
+    !destination ||
+    !Number.isInteger(target.index) ||
+    target.index < 0 ||
+    target.index > destination.length
+  )
+    return { definition, error: 'Выберите существующее место для вставки.' };
+  if (subtreeIds(source.node).includes(target.containerId))
+    return { definition, error: 'Раздел нельзя переместить внутрь самого себя или вложенного раздела.' };
+  const copy = structuredClone(definition);
+  const from = locateNode(copy, nodeId)!;
+  const to = containerOf(copy, target.containerId)!;
+  const index = from.siblings === to && from.index < target.index ? target.index - 1 : target.index;
+  if (from.siblings === to && from.index === index) return { definition, selectedId: nodeId };
+  from.siblings.splice(from.index, 1);
+  to.splice(index, 0, from.node);
+  const error = validateArrangement(copy);
+  return error ? { definition, error } : { definition: copy, selectedId: nodeId };
+}
+export function insertContentNode(
+  definition: SplitTemplate,
+  node: ContentNode,
+  target: NodeDropTarget,
+): NodeOperationResult {
+  const destination = containerOf(definition, target.containerId);
+  if (
+    !destination ||
+    !Number.isInteger(target.index) ||
+    target.index < 0 ||
+    target.index > destination.length
+  )
+    return { definition, error: 'Выберите существующее место для вставки.' };
+  const globalIds = (node: ContentNode): string[] => [
+    node.id,
+    ...(node.type === 'fields' || node.type === 'recordList'
+      ? node.fields.map((field) => field.id)
+      : node.type === 'metrics'
+        ? node.items.map((field) => field.id)
+        : node.type === 'table'
+          ? node.columns.map((field) => field.id)
+          : []),
+    ...(node.type === 'documents' && node.action ? [node.action.id] : []),
+    ...(node.type === 'section' ? node.children.flatMap(globalIds) : []),
+  ];
+  const existing = new Set([
+    definition.id,
+    ...definition.tabs.flatMap((tab) => [tab.id, ...tab.nodes.flatMap(globalIds)]),
+    ...(definition.header.fields ?? []).map((field) => field.id),
+    ...(definition.header.actions ?? []).map((action) => action.id),
+    ...(definition.footer.actions ?? []).map((action) => action.id),
+    ...(definition.footer.buttons ?? []).map((button) => button.id),
+  ]);
+  const inserted = globalIds(node);
+  if (new Set(inserted).size !== inserted.length || inserted.some((id) => existing.has(id)))
+    return { definition, error: 'ID добавляемого блока уже используется.' };
+  const copy = structuredClone(definition);
+  containerOf(copy, target.containerId)!.splice(target.index, 0, structuredClone(node));
+  const error = validateArrangement(copy);
+  return error ? { definition, error } : { definition: copy, selectedId: node.id };
+}
+export function nodeContainers(
+  definition: SplitTemplate,
+  excludeNodeId?: string,
+): { value: string; label: string; count: number }[] {
+  const excluded = new Set(
+    excludeNodeId
+      ? subtreeIds(locateNode(definition, excludeNodeId)?.node ?? ({ id: excludeNodeId } as ContentNode))
+      : [],
+  );
+  const result: { value: string; label: string; count: number }[] = [];
+  for (const tab of definition.tabs) {
+    result.push({ value: tab.id, label: `Вкладка: ${tab.title}`, count: tab.nodes.length });
+    const walk = (nodes: ContentNode[], prefix: string) =>
+      nodes.forEach((node) => {
+        if (node.type === 'section' && !excluded.has(node.id)) {
+          result.push({ value: node.id, label: `${prefix} / ${node.title}`, count: node.children.length });
+          walk(node.children, `${prefix} / ${node.title}`);
+        }
+      });
+    walk(tab.nodes, tab.title);
+  }
+  return result;
 }
 
 export function createField(_catalog: Catalog, _index = 0): FieldDefinition {
@@ -89,6 +280,33 @@ export function createNode(type: ContentNode['type'], catalog: Catalog): Content
         widgetId: catalog.widgets.find((widget) => widget.mode === 'embedded')?.id ?? '',
         height: 240,
       };
+    case 'erpTable':
+      return {
+        id,
+        type,
+        title: 'ERP-таблица',
+        tableUrl: { kind: 'literal', value: '' },
+        height: 420,
+        options: {},
+      };
+    case 'badge':
+      return { id, type, title: 'Бейдж', value: { kind: 'literal', value: 'Статус' }, tone: 'neutral' };
+    case 'avatar':
+      return { id, type, title: 'Аватар', name: { kind: 'literal', value: 'Имя пользователя' }, size: 'm' };
+    case 'image':
+      return {
+        id,
+        type,
+        title: 'Изображение',
+        src: { kind: 'literal', value: '' },
+        alt: { kind: 'literal', value: '' },
+        height: 240,
+        fit: 'contain',
+      };
+    case 'progress':
+      return { id, type, title: 'Прогресс', value: { kind: 'literal', value: 0 }, max: 100, showValue: true };
+    case 'divider':
+      return { id, type, title: 'Разделитель' };
     case 'callout':
       return {
         id,

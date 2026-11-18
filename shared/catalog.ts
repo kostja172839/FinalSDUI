@@ -2,6 +2,22 @@ import type { Catalog } from './model';
 
 /** The approved product vocabulary. Bindings and widget IDs are not executable code. */
 export const catalog: Catalog = {
+  authoringNodeTypes: [
+    'fields',
+    'section',
+    'text',
+    'erpTable',
+    'badge',
+    'avatar',
+    'image',
+    'progress',
+    'divider',
+    'widget',
+    'callout',
+    'metrics',
+    'recordList',
+    'documents',
+  ],
   actions: [
     {
       id: 'demo.inspectParams',
@@ -23,6 +39,12 @@ export const catalog: Catalog = {
     'section',
     'text',
     'table',
+    'erpTable',
+    'badge',
+    'avatar',
+    'image',
+    'progress',
+    'divider',
     'widget',
     'callout',
     'metrics',

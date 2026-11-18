@@ -2,6 +2,12 @@ import { catalog as demoCatalog } from './catalog';
 import type { Catalog, CatalogField, FieldDefinition, ValidationIssue } from './model';
 import { isJsonValue, isSafeBinding, readPath, resolveValue } from './values';
 import { validateFieldValue } from './data-validation';
+import {
+  ERP_TABLE_DATA_PROPS,
+  ERP_TABLE_EVENTS,
+  safeErpTableUrl,
+  validateErpTableOptions,
+} from './erp-table-contract';
 
 export interface ValidationCapabilities {
   nodeTypes?: string[];
@@ -302,6 +308,92 @@ export function validateTemplate(
           n.pageSize > 100
         )
           add(`${p}.pageSize`, 'Размер страницы должен быть целым числом от 1 до 100.', nodeId);
+      } else if (n.type === 'erpTable') {
+        valueSource(n.tableUrl, undefined, `${p}.tableUrl`, catalog.fields, nodeId);
+        if (record(n.tableUrl) && n.tableUrl.kind === 'literal' && !safeErpTableUrl(n.tableUrl.value))
+          add(`${p}.tableUrl.value`, 'Укажите URL таблицы: путь /api/... или HTTP/HTTPS адрес.', nodeId);
+        if (typeof n.height !== 'number' || !Number.isFinite(n.height) || n.height < 200 || n.height > 1600)
+          add(`${p}.height`, 'Высота таблицы должна быть от 200 до 1600 px.', nodeId);
+        for (const issue of validateErpTableOptions(n.options))
+          add(`${p}.options${issue.path ? `.${issue.path}` : ''}`, issue.message, nodeId);
+        invocation(n, p, nodeId);
+        if (record(n.props))
+          for (const [key, source] of Object.entries(n.props)) {
+            if (!(ERP_TABLE_DATA_PROPS as readonly string[]).includes(key.split('.')[0]))
+              add(
+                `${p}.props.${key}`,
+                'Этот параметр таблицы настраивается только в приложении-хосте.',
+                nodeId,
+              );
+            else if (!key.includes('.') && record(source) && source.kind === 'literal')
+              for (const issue of validateErpTableOptions({ [key]: source.value }))
+                add(`${p}.props.${key}.value`, issue.message, nodeId);
+          }
+        if (record(n.events))
+          for (const key of Object.keys(n.events))
+            if (!(ERP_TABLE_EVENTS as readonly string[]).includes(key))
+              add(`${p}.events.${key}`, 'Выберите событие из контракта ErpTableWidget.', nodeId);
+      } else if (['badge', 'avatar', 'image', 'progress', 'divider'].includes(String(n.type))) {
+        const keys =
+          n.type === 'badge' || n.type === 'progress'
+            ? ['value']
+            : n.type === 'avatar'
+              ? ['name']
+              : n.type === 'image'
+                ? ['src', 'alt']
+                : [];
+        for (const key of keys) valueSource(n[key], undefined, `${p}.${key}`, catalog.fields, nodeId);
+        if (n.type === 'avatar') {
+          if (n.src !== undefined) valueSource(n.src, undefined, `${p}.src`, catalog.fields, nodeId);
+          if (!['s', 'm', 'l'].includes(String(n.size)))
+            add(`${p}.size`, 'Размер аватара: s, m или l.', nodeId);
+        }
+        if (
+          n.type === 'badge' &&
+          !['neutral', 'info', 'success', 'warning', 'error'].includes(String(n.tone))
+        )
+          add(`${p}.tone`, 'Выберите поддерживаемый цвет статуса.', nodeId);
+        if (n.type === 'image') {
+          if (!['contain', 'cover'].includes(String(n.fit)))
+            add(`${p}.fit`, 'Масштаб изображения: contain или cover.', nodeId);
+          if (typeof n.height !== 'number' || !Number.isFinite(n.height) || n.height < 80 || n.height > 1200)
+            add(`${p}.height`, 'Высота изображения должна быть от 80 до 1200 px.', nodeId);
+          if (record(n.alt) && n.alt.kind === 'literal' && typeof n.alt.value !== 'string')
+            add(`${p}.alt.value`, 'Описание изображения должно быть текстом.', nodeId);
+        }
+        if (n.type === 'avatar' || n.type === 'image') {
+          if (record(n.src) && n.src.kind === 'literal' && n.src.value !== '' && n.src.value !== null) {
+            if (typeof n.src.value !== 'string' || /[\\\u0000-\u001f\u007f]/.test(n.src.value))
+              add(`${p}.src.value`, 'Укажите HTTP/HTTPS адрес изображения или путь от /.', nodeId);
+            else
+              validateFieldValue({ format: 'link' }, n.src.value).forEach((message) =>
+                add(`${p}.src.value`, message, nodeId),
+              );
+          }
+        }
+        if (n.type === 'progress') {
+          if (typeof n.max !== 'number' || !Number.isFinite(n.max) || n.max <= 0)
+            add(`${p}.max`, 'Максимум прогресса должен быть положительным числом.', nodeId);
+          boolean(n.showValue, `${p}.showValue`, nodeId);
+          if (record(n.value) && n.value.kind === 'literal') {
+            if (Array.isArray(n.value.value) || record(n.value.value))
+              add(`${p}.value.value`, 'Значение прогресса должно быть числом.', nodeId);
+            else
+              validateFieldValue(
+                {
+                  format: 'number',
+                  validation: { min: 0, ...(typeof n.max === 'number' && n.max > 0 ? { max: n.max } : {}) },
+                },
+                n.value.value,
+              ).forEach((message) => add(`${p}.value.value`, message, nodeId));
+          }
+        }
+        if (
+          n.type === 'divider' &&
+          n.label !== undefined &&
+          (typeof n.label !== 'string' || n.label.length > 2000)
+        )
+          add(`${p}.label`, 'Подпись разделителя должна быть текстом до 2000 символов.', nodeId);
       } else if (n.type === 'callout') {
         valueSource(n.source, n.binding, `${p}.source`, catalog.fields, nodeId);
         if (!['info', 'success', 'warning', 'error'].includes(String(n.tone)))

@@ -4,6 +4,11 @@ import {
   ArrowLeft,
   ArrowRight,
   AlertCircle,
+  ContactRound,
+  Image as ImageIcon,
+  Gauge,
+  SeparatorHorizontal,
+  Tag,
   Blocks,
   BookOpen,
   Check,
@@ -76,9 +81,31 @@ const nodeMeta = {
     icon: FileText,
   },
   table: {
-    title: 'Таблица записей',
-    description: 'Связанные данные, поиск, сортировка и страницы.',
+    title: 'Таблица из данных',
+    description: 'Снимок связанных данных с колонками, поиском и страницами.',
     icon: LayoutPanelLeft,
+  },
+  erpTable: {
+    title: 'ERP-таблица',
+    description: 'Ваш ErpTableWidget сам загружает данные и настройки по tableUrl.',
+    icon: LayoutPanelLeft,
+  },
+  badge: { title: 'Статус', description: 'Отдельный статус или метка на Badge из FinAI.', icon: Tag },
+  avatar: {
+    title: 'Аватар',
+    description: 'Пользователь или организация: имя и изображение.',
+    icon: ContactRound,
+  },
+  image: {
+    title: 'Изображение',
+    description: 'Изображение из API или по заданному адресу.',
+    icon: ImageIcon,
+  },
+  progress: { title: 'Прогресс', description: 'Прогресс по значению и настроенному максимуму.', icon: Gauge },
+  divider: {
+    title: 'Разделитель',
+    description: 'Визуальное разделение содержимого с необязательной подписью.',
+    icon: SeparatorHorizontal,
   },
   widget: {
     title: 'Встроенный виджет',
@@ -207,7 +234,7 @@ export default function App() {
   const effectiveDefinition = useMemo(() => {
     if (!definition || !catalog || page !== 'components') return definition;
     const richExample = ['callout', 'metrics', 'recordList', 'documents'].includes(componentType);
-    const selected =
+    let selected =
       (richExample
         ? findNode(
             contractExampleDefinition.tabs.flatMap((tab) => tab.nodes),
@@ -219,6 +246,8 @@ export default function App() {
         componentType,
       ) ??
       createNode(componentType, catalog);
+    if (selected.type === 'erpTable' && selected.tableUrl.kind === 'literal' && !selected.tableUrl.value)
+      selected = { ...selected, tableUrl: { kind: 'literal', value: '/api/table/example' } };
     return {
       ...definition,
       header: {
@@ -379,6 +408,32 @@ export default function App() {
     setDefinition(future[0]);
     setFuture((items) => items.slice(1));
   };
+  useEffect(() => {
+    const shortcuts = (event: KeyboardEvent) => {
+      if (
+        page !== 'builder' ||
+        busy ||
+        event.defaultPrevented ||
+        event.altKey ||
+        !(event.ctrlKey || event.metaKey)
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input,textarea,select,[contenteditable="true"]')
+      )
+        return;
+      const key = event.key.toLowerCase();
+      const isRedo = key === 'y' || (key === 'z' && event.shiftKey);
+      if ((key === 'z' && !event.shiftKey && past.length) || (isRedo && future.length)) {
+        event.preventDefault();
+        if (isRedo) redo();
+        else undo();
+      }
+    };
+    window.addEventListener('keydown', shortcuts);
+    return () => window.removeEventListener('keydown', shortcuts);
+  }, [page, busy, definition, past, future]);
   const updateRecord = (next: TemplateRecord) => {
     setRecord(next);
     setRecords((items) =>
@@ -488,11 +543,6 @@ export default function App() {
   };
   const selectNode = (id: string) => {
     setSelection(id);
-    requestAnimationFrame(() =>
-      Array.from(window.document.querySelectorAll<HTMLElement>('[data-node-id]'))
-        .find((element) => element.dataset.nodeId === id)
-        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
-    );
   };
   const navigate = (next: Page) => {
     if (next === 'json') setJsonVisited(true);
@@ -602,6 +652,7 @@ export default function App() {
             onWidgetEvent={handleWidgetEvent}
             actionHandlers={actionHandlers}
             actionDescriptors={catalog.actions}
+            tableRefreshToken={refreshEpoch}
           />
         ) : !opened ? (
           <div className="preview-error">
@@ -889,24 +940,30 @@ export default function App() {
               <aside>
                 <h2>Блоки просмотра</h2>
                 <p>Каждый блок имеет собственный контракт и настройки.</p>
-                {(Object.keys(nodeMeta) as ContentNode['type'][]).map((type) => {
-                  const meta = nodeMeta[type];
-                  return (
-                    <button
-                      key={type}
-                      type="button"
-                      className={componentType === type ? 'active' : ''}
-                      onClick={() => setComponentType(type)}
-                    >
-                      <meta.icon size={19} />
-                      <span>
-                        <strong>{meta.title}</strong>
-                        <small>{meta.description}</small>
-                      </span>
-                      <ArrowRight size={15} />
-                    </button>
-                  );
-                })}
+                {(Object.keys(nodeMeta) as ContentNode['type'][])
+                  .filter(
+                    (type) =>
+                      catalog.nodeTypes.includes(type) &&
+                      (catalog.authoringNodeTypes ?? catalog.nodeTypes).includes(type),
+                  )
+                  .map((type) => {
+                    const meta = nodeMeta[type];
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        className={componentType === type ? 'active' : ''}
+                        onClick={() => setComponentType(type)}
+                      >
+                        <meta.icon size={19} />
+                        <span>
+                          <strong>{meta.title}</strong>
+                          <small>{meta.description}</small>
+                        </span>
+                        <ArrowRight size={15} />
+                      </button>
+                    );
+                  })}
                 <div className="catalog-integration">
                   <Puzzle size={19} />
                   <strong>Микрофронтенды через хост</strong>
@@ -995,6 +1052,7 @@ export default function App() {
                           onWidgetEvent={handleWidgetEvent}
                           actionHandlers={actionHandlers}
                           actionDescriptors={catalog.actions}
+                          tableRefreshToken={refreshEpoch}
                         />
                       )
                     )}

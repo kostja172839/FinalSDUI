@@ -1,0 +1,64 @@
+.display-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.display-avatar-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.display-value-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+.display-value-error svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.display-empty {
+  margin: 0;
+}
+.display-kit-image img {
+  object-fit: var(--display-image-fit, contain);
+}
+.display-image-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 20px;
+  text-align: center;
+}
+.display-image-unavailable p {
+  margin: 0;
+}
+.display-image-unavailable span {
+  overflow-wrap: anywhere;
+  max-width: 65ch;
+}
+.display-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.display-divider > span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  flex: 0 1 auto;
+}
+.display-divider > :last-child {
+  flex: 1 1 40px;
+  min-width: 24px;
+}

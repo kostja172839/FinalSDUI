@@ -14,3 +14,7 @@ export { ActionMenu } from './runtime/ActionMenu';
 export type { ActionMenuProps } from './runtime/ActionMenu';
 export { getHeaderActions, getFooterActions } from '../shared/actions';
 export type * from '../shared/model';
+export { ErpTableHost, createErpTableAdapter, resolveErpTableInput } from './runtime/erp-table';
+export type { ErpTableAdapter, ErpTableHandle, ErpTableTrustedOptions } from './runtime/erp-table';
+export { DisplayBlock } from './runtime/DisplayBlocks';
+export type { DisplayBlockProps, DisplayContentNode } from './runtime/DisplayBlocks';

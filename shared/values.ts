@@ -92,7 +92,17 @@ export function canonicalizeDefinition(definition: SplitTemplate): SplitTemplate
       else if (node.type === 'metrics') node.items.forEach(bound);
       else if (node.type === 'section') visit(node.children);
       else if (node.type === 'widget') invocation(node);
-      else {
+      else if (node.type === 'erpTable') {
+        source(node.tableUrl);
+        invocation(node);
+      } else if (node.type === 'badge' || node.type === 'progress') source(node.value);
+      else if (node.type === 'avatar') {
+        source(node.name);
+        source(node.src);
+      } else if (node.type === 'image') {
+        source(node.src);
+        source(node.alt);
+      } else if ('binding' in node) {
         bound(node);
         if (node.type === 'documents' && node.action) invocation(node.action);
       }

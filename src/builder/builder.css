@@ -11,6 +11,151 @@
   background: var(--surface-soft, #f5f7f9);
   color: var(--text, #20262c);
 }
+.builder-drag-handle {
+  display: inline-flex;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted, #687482);
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.builder-drag-handle:hover,
+.builder-drag-handle:focus-visible {
+  color: var(--accent, #216bce);
+  background: var(--accent-soft, #eaf2fd);
+}
+.builder-drag-handle:focus-visible {
+  outline: 2px solid var(--accent, #216bce);
+  outline-offset: 1px;
+}
+.builder-drag-handle.is-dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.builder-drag-overlay {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent, #216bce);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--text, #20262d);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  cursor: grabbing;
+}
+.builder-drop-zone {
+  height: 0;
+  overflow: hidden;
+}
+.builder-drop-zone.is-drag-active {
+  min-height: 20px;
+  height: auto;
+  padding: 2px 5px;
+  border: 1px dashed var(--line, #e5e9ee);
+  border-radius: 4px;
+  color: var(--muted, #687482);
+  font-size: 10px;
+  line-height: 16px;
+}
+.builder-drop-zone.is-over,
+.builder-drop-container.is-over {
+  outline: 2px solid var(--accent, #216bce);
+  outline-offset: -2px;
+  background: var(--accent-soft, #eaf2fd);
+}
+.builder-preview-node {
+  position: relative;
+}
+.builder-preview-node + .builder-preview-node > .runtime-block {
+  border-top: 1px solid var(--line, #e5e9ee);
+}
+.section-content > .builder-preview-node:first-child > .runtime-block {
+  padding-top: 8px;
+}
+.builder-preview-node-tools {
+  position: absolute;
+  right: -16px;
+  top: 4px;
+  z-index: 4;
+  opacity: 0;
+}
+.builder-preview-node:hover > .builder-preview-node-tools,
+.builder-preview-node:focus-within > .builder-preview-node-tools {
+  opacity: 1;
+}
+.builder-tree-fields {
+  display: flex;
+  flex-direction: column;
+  padding-left: 28px;
+}
+.builder-tree-field {
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #687482);
+  border-radius: 4px;
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.builder-tree-field:hover,
+.builder-tree-field.is-selected {
+  background: var(--accent-soft, #eaf2fd);
+  color: var(--accent, #216bce);
+}
+.runtime-selectable-field {
+  cursor: pointer;
+  border-radius: 4px;
+  outline-offset: 4px;
+}
+.runtime-selectable-field:hover {
+  outline: 1px dashed var(--accent, #216bce);
+}
+.runtime-selectable-field.is-field-selected,
+.runtime-selectable-field:focus-visible {
+  outline: 2px solid var(--accent, #216bce);
+  background: var(--accent-soft, #eaf2fd);
+}
+.builder-drag-status {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  z-index: 20;
+  padding: 9px 12px;
+  border: 1px solid var(--line, #e5e9ee);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--text, #20262d);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+.builder-drag-status:empty {
+  display: none;
+}
+@media (hover: none) {
+  .builder-preview-node-tools {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .builder-drag-overlay {
+    transition: none;
+  }
+}
 .builder-structure,
 .builder-properties {
   display: flex;
@@ -279,6 +424,10 @@
   bottom: 118px;
   left: 14px;
   width: calc(100% - 28px);
+  max-height: calc(100% - 140px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   padding: 8px;
   background: var(--surface, #fff);
   box-shadow: 0 8px 36px #20313825;
@@ -291,6 +440,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 4px 7px 8px;
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  background: var(--surface, #fff);
 }
 .builder-palette-heading > strong {
   font-size: 12px;

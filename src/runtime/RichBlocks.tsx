@@ -16,6 +16,7 @@ import { resolveValue, resolveWidgetInput } from '../../shared/values';
 import { Button } from '../ui';
 import { displayText, safeHref } from './bindings';
 import './RichBlocks.css';
+import { editorSelection, fieldSelectionClass } from './editorSelection';
 
 export type RichContentNode = CalloutNode | MetricsNode | RecordListNode | DocumentsNode;
 export interface RichBlockProps {
@@ -25,6 +26,8 @@ export interface RichBlockProps {
   onOpenWidget?: (intent: OpenWidgetIntent) => void;
   dataIssues?: DataValidationIssue[];
   renderValue?: (value: unknown, format: FieldFormat) => ReactNode;
+  selectedNodeId?: string;
+  onSelectNode?: (id: string) => void;
 }
 
 function messages(issues: DataValidationIssue[], nodeId: string, fieldId?: string, itemIndex?: number) {
@@ -78,11 +81,17 @@ export function RichBlock({
   onOpenWidget,
   dataIssues = [],
   renderValue = (value) => displayText(value),
+  selectedNodeId,
+  onSelectNode,
 }: RichBlockProps) {
   const fieldValue = (field: FieldDefinition, scope: Record<string, unknown>, itemIndex?: number) => {
     const issues = messages(dataIssues, node.id, field.id, itemIndex);
     return (
-      <div className={`detail-field ${issues.length ? 'rich-field-invalid' : ''}`} key={field.id}>
+      <div
+        {...editorSelection(field.id, field.label, selectedNodeId, onSelectNode)}
+        className={`detail-field ${issues.length ? 'rich-field-invalid' : ''} ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+        key={field.id}
+      >
         <dt>
           {field.label}
           {field.validation?.required && (
@@ -126,7 +135,11 @@ export function RichBlock({
           style={{ '--rich-columns': node.columns } as CSSProperties}
         >
           {node.items.map((field) => (
-            <div key={field.id} className="rich-metric">
+            <div
+              key={field.id}
+              {...editorSelection(field.id, field.label, selectedNodeId, onSelectNode)}
+              className={`rich-metric ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+            >
               <dt>{field.label}</dt>
               <dd>
                 <span className="rich-metric-value">

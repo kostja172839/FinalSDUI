@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -24,6 +24,11 @@ import {
   Building2,
   BadgeDollarSign,
   MessageSquareText,
+  Tag,
+  UserRound,
+  Image,
+  Gauge,
+  Minus,
 } from 'lucide-react';
 import type {
   Catalog,
@@ -37,7 +42,18 @@ import type {
   ValueSource,
 } from '../../shared/model';
 import { Button, IconButton, Input, Select, Toggle, FieldErrorScope } from '../ui';
-import { changeDefinition, createId, createNode, duplicateNode, locateNode } from './operations';
+import {
+  changeDefinition,
+  createId,
+  createNode,
+  duplicateNode,
+  locateNode,
+  locateField,
+  insertContentNode,
+  moveContentNode,
+  nodeContainers,
+  type NodeDropTarget,
+} from './operations';
 import { getHeaderActions, getFooterActions } from '../../shared/actions';
 import { ActionListEditor } from './ActionListEditor';
 import { FooterButtonsEditor } from './FooterButtonsEditor';
@@ -45,6 +61,15 @@ import { BindingPathInput, ValueSourceEditor } from './ValueSourceEditor';
 import { WidgetInvocationEditor } from './WidgetInvocationEditor';
 import { EditorValidityProvider } from './editorValidation';
 import { PreviewDataProvider, PreviewRowScope } from './previewData';
+import {
+  EditorDragProvider,
+  NodeDragHandle,
+  NodeDropZone,
+  PaletteDragItem,
+  type EditorDragItem,
+} from './dragAndDrop';
+import { ErpTableEditor } from './ErpTableEditor';
+import { DisplayNodeEditor } from './DisplayNodeEditor';
 import './builder.css';
 
 export interface BuilderProps {
@@ -70,6 +95,12 @@ const nodeLabels: Record<ContentNode['type'], string> = {
   metrics: 'Суммы и показатели',
   recordList: 'Карточки записей',
   documents: 'Документы и ссылки',
+  erpTable: 'ERP-таблица',
+  badge: 'Бейдж',
+  avatar: 'Аватар',
+  image: 'Изображение',
+  progress: 'Прогресс',
+  divider: 'Разделитель',
 };
 const nodeIcons = {
   fields: Columns2,
@@ -81,7 +112,16 @@ const nodeIcons = {
   metrics: BadgeDollarSign,
   recordList: Building2,
   documents: Files,
+  erpTable: Table2,
+  badge: Tag,
+  avatar: UserRound,
+  image: Image,
+  progress: Gauge,
+  divider: Minus,
 };
+const BuilderSelectionContext = createContext<{ selectedId: string; select: (id: string) => void } | null>(
+  null,
+);
 const formats: { value: FieldFormat; label: string }[] = [
   { value: 'text', label: 'Текст' },
   { value: 'date', label: 'Дата' },
@@ -160,8 +200,12 @@ function FieldListEditor({
   metrics?: boolean;
   limit?: number;
 }) {
+  const selection = useContext(BuilderSelectionContext);
   const [selected, setSelected] = useState(fields[0]?.id ?? '');
-  const selectedField = fields.find((field) => field.id === selected) ?? fields[0];
+  const selectedField =
+    fields.find((field) => field.id === selection?.selectedId) ??
+    fields.find((field) => field.id === selected) ??
+    fields[0];
   const change = (id: string, update: Partial<FieldDefinition>) =>
     onChange(fields.map((field) => (field.id === id ? { ...field, ...update } : field)));
   const move = (id: string, direction: number) => {
@@ -182,6 +226,7 @@ function FieldListEditor({
     };
     onChange([...fields, field]);
     setSelected(field.id);
+    selection?.select(field.id);
   };
   return (
     <div className="builder-field-editor">
@@ -194,7 +239,10 @@ function FieldListEditor({
             <button
               type="button"
               className="builder-field-select"
-              onClick={() => setSelected(field.id)}
+              onClick={() => {
+                setSelected(field.id);
+                selection?.select(field.id);
+              }}
               aria-pressed={selectedField?.id === field.id}
             >
               <span className="builder-field-number">{index + 1}</span>
@@ -351,8 +399,15 @@ export function Builder({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [mobilePanel, setMobilePanel] = useState<'tree' | 'properties' | null>(null);
+  const [dragMessage, setDragMessage] = useState('');
+  useEffect(() => {
+    if (!dragMessage) return;
+    const timer = setTimeout(() => setDragMessage(''), 4500);
+    return () => clearTimeout(timer);
+  }, [dragMessage]);
   const selectedId = selectedNodeId ?? localSelection;
-  const located = locateNode(definition, selectedId);
+  const selectedFieldLocation = locateField(definition, selectedId);
+  const located = locateNode(definition, selectedFieldLocation?.ownerId ?? selectedId);
   const selectedNode = located?.node;
   const selectedTab = definition.tabs.find((tab) => tab.id === selectedId);
   const activeTab = selectedTab ?? located?.tab ?? definition.tabs[0];
@@ -383,7 +438,7 @@ export function Builder({
     });
   const updateNode = (update: Partial<ContentNode>) =>
     mutate((copy) => {
-      const match = locateNode(copy, selectedId);
+      const match = locateNode(copy, selectedNode?.id ?? selectedId);
       if (match) Object.assign(match.node, update);
     });
   const toggleExpanded = (id: string) =>
@@ -395,14 +450,16 @@ export function Builder({
     });
   const addNode = (type: ContentNode['type']) => {
     const node = createNode(type, catalog);
-    mutate((copy) => {
-      const match = locateNode(copy, selectedId);
-      if (match?.node.type === 'section') match.node.children.push(node);
-      else {
-        const target = copy.tabs.find((tab) => tab.id === activeTab?.id) ?? copy.tabs[0];
-        target?.nodes.push(node);
-      }
+    const containerId = selectedNode?.type === 'section' ? selectedNode.id : activeTab.id;
+    const result = insertContentNode(definition, node, {
+      containerId,
+      index: selectedNode?.type === 'section' ? selectedNode.children.length : activeTab.nodes.length,
     });
+    if (result.error) {
+      setDragMessage(result.error);
+      return;
+    }
+    onChange(result.definition);
     if (selectedNode?.type === 'section')
       setExpanded((previous) => {
         const next = new Set(previous);
@@ -411,6 +468,25 @@ export function Builder({
       });
     select(node.id);
     setPaletteOpen(false);
+  };
+  const drop = (item: EditorDragItem, target: NodeDropTarget) => {
+    const result =
+      item.kind === 'node'
+        ? moveContentNode(definition, item.nodeId, target)
+        : insertContentNode(definition, createNode(item.nodeType, catalog), target);
+    setDragMessage(
+      result.error ?? `Блок «${item.label}» ${item.kind === 'palette' ? 'добавлен' : 'перемещён'}.`,
+    );
+    if (!result.error) {
+      if (result.definition !== definition) onChange(result.definition);
+      if (result.selectedId) select(result.selectedId);
+      setExpanded((old) => {
+        const next = new Set(old);
+        next.delete(target.containerId);
+        return next;
+      });
+      setPaletteOpen(false);
+    }
   };
   const moveNode = (direction: number) =>
     mutate((copy) => {
@@ -435,49 +511,78 @@ export function Builder({
   const duplicate = () => {
     if (!selectedNode) return;
     const next = duplicateNode(selectedNode);
-    mutate((copy) => {
-      const match = locateNode(copy, selectedId);
-      if (match) match.siblings.splice(match.index + 1, 0, next);
+    if (!located) return;
+    const result = insertContentNode(definition, next, {
+      containerId: located.containerId,
+      index: located.index + 1,
     });
+    if (result.error) {
+      setDragMessage(result.error);
+      return;
+    }
+    onChange(result.definition);
     select(next.id);
   };
-  const renderNode = (node: ContentNode, depth: number) => {
+  const renderNode = (node: ContentNode, depth: number, containerId: string, index: number) => {
     const Icon = nodeIcons[node.type];
     const collapsed = expanded.has(node.id);
     const hasError = issues.some((issue) => issue.nodeId === node.id && issue.severity === 'error');
     return (
       <div key={node.id} className="builder-tree-node">
-        <div
-          className={`builder-tree-row ${selectedId === node.id ? 'is-selected' : ''}`}
-          style={{ paddingLeft: 12 + depth * 15 }}
-        >
-          {node.type === 'section' ? (
+        <NodeDropZone target={{ containerId, index }} label={`Перед блоком «${node.title}»`}>
+          <div
+            className={`builder-tree-row ${selectedId === node.id ? 'is-selected' : ''}`}
+            style={{ paddingLeft: 12 + depth * 15 }}
+          >
+            <NodeDragHandle nodeId={node.id} label={node.title || nodeLabels[node.type]} />
+            {node.type === 'section' ? (
+              <button
+                type="button"
+                className="builder-tree-expander"
+                aria-label={`${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${node.title}»`}
+                onClick={() => toggleExpanded(node.id)}
+              >
+                {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              </button>
+            ) : (
+              <span className="builder-tree-spacer" />
+            )}
             <button
               type="button"
-              className="builder-tree-expander"
-              aria-label={`${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${node.title}»`}
-              onClick={() => toggleExpanded(node.id)}
+              className="builder-tree-select"
+              onClick={() => select(node.id)}
+              aria-current={selectedId === node.id ? 'true' : undefined}
             >
-              {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              <Icon size={15} />
+              <span>{node.title || nodeLabels[node.type]}</span>
+              {hasError && <CircleAlert size={13} className="builder-error-icon" />}
             </button>
-          ) : (
-            <span className="builder-tree-spacer" />
-          )}
-          <button
-            type="button"
-            className="builder-tree-select"
-            onClick={() => select(node.id)}
-            aria-current={selectedId === node.id ? 'true' : undefined}
-          >
-            <Icon size={15} />
-            <span>{node.title || nodeLabels[node.type]}</span>
-            {hasError && <CircleAlert size={13} className="builder-error-icon" />}
-          </button>
-        </div>
+          </div>
+        </NodeDropZone>
+        {(node.type === 'fields' ||
+          node.type === 'recordList' ||
+          node.type === 'metrics' ||
+          node.type === 'table') && (
+          <div className="builder-tree-fields" style={{ paddingLeft: 38 + depth * 15 }}>
+            {(node.type === 'metrics' ? node.items : node.type === 'table' ? node.columns : node.fields).map(
+              (field) => (
+                <button
+                  key={field.id}
+                  type="button"
+                  className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
+                  onClick={() => select(field.id)}
+                  aria-current={selectedId === field.id ? 'true' : undefined}
+                >
+                  <span>{field.label || 'Без подписи'}</span>
+                </button>
+              ),
+            )}
+          </div>
+        )}
         {node.type === 'section' && !collapsed && (
           <div>
             {node.children.length ? (
-              node.children.map((child) => renderNode(child, depth + 1))
+              node.children.map((child, index) => renderNode(child, depth + 1, node.id, index))
             ) : (
               <button
                 type="button"
@@ -491,6 +596,10 @@ export function Builder({
                 Добавить в раздел <Plus size={12} />
               </button>
             )}
+            <NodeDropZone
+              target={{ containerId: node.id, index: node.children.length }}
+              label={`В раздел «${node.title}»`}
+            />
           </div>
         )}
       </div>
@@ -498,6 +607,44 @@ export function Builder({
   };
 
   const renderProperties = () => {
+    if (selectedFieldLocation) {
+      const owner = selectedFieldLocation.node;
+      const editor = (
+        <SettingGroup
+          title={selectedFieldLocation.collection === 'columns' ? 'Настройки колонки' : 'Настройки поля'}
+        >
+          <Button variant="ghost" size="sm" onClick={() => select(selectedFieldLocation.ownerId)}>
+            <ChevronRight size={14} />К настройкам {owner ? `блока «${owner.title}»` : 'шапки'}
+          </Button>
+          <FieldListEditor
+            key={selectedFieldLocation.ownerId}
+            fields={selectedFieldLocation.fields}
+            available={owner?.type === 'recordList' || owner?.type === 'table' ? [] : catalog.fields}
+            path={
+              selectedFieldLocation.ownerId === '$header' ? 'header.fields' : selectedFieldLocation.collection
+            }
+            table={selectedFieldLocation.collection === 'columns'}
+            metrics={owner?.type === 'metrics'}
+            limit={selectedFieldLocation.ownerId === '$header' ? 12 : undefined}
+            onChange={(fields) => {
+              mutate((copy) => {
+                const match = locateField(copy, selectedId);
+                if (match) match.fields.splice(0, match.fields.length, ...fields);
+              });
+              if (!fields.some((field) => field.id === selectedId))
+                select(fields[0]?.id ?? selectedFieldLocation.ownerId);
+            }}
+          />
+        </SettingGroup>
+      );
+      return owner?.type === 'recordList' || owner?.type === 'table' ? (
+        <PreviewRowScope source={owner.source} binding={owner.binding}>
+          {editor}
+        </PreviewRowScope>
+      ) : (
+        editor
+      );
+    }
     if (selectedId === '$header')
       return (
         <>
@@ -988,6 +1135,23 @@ export function Builder({
             </Hint>
           </SettingGroup>
         )}
+        {selectedNode.type === 'erpTable' && (
+          <ErpTableEditor node={selectedNode} catalog={catalog} onChange={(node) => updateNode(node)} />
+        )}
+        {(['badge', 'avatar', 'image', 'progress', 'divider'] as const).some(
+          (type) => type === selectedNode.type,
+        ) && (
+          <DisplayNodeEditor
+            node={
+              selectedNode as Extract<
+                ContentNode,
+                { type: 'badge' | 'avatar' | 'image' | 'progress' | 'divider' }
+              >
+            }
+            fields={catalog.fields}
+            onChange={(node) => updateNode(node)}
+          />
+        )}
         {selectedNode.type === 'callout' && (
           <SettingGroup title="Информационное сообщение">
             <Select
@@ -1258,6 +1422,24 @@ export function Builder({
           )}
         </SettingGroup>
         <SettingGroup title="Управление блоком">
+          <Select
+            label="Переместить в контейнер"
+            value=""
+            options={[
+              { value: '', label: 'Выберите вкладку или раздел' },
+              ...nodeContainers(definition, selectedNode.id),
+            ]}
+            onChange={(event) => {
+              const target = nodeContainers(definition, selectedNode.id).find(
+                (item) => item.value === event.target.value,
+              );
+              if (target)
+                drop(
+                  { kind: 'node', nodeId: selectedNode.id, label: selectedNode.title },
+                  { containerId: target.value, index: target.count },
+                );
+            }}
+          />
           <div className="builder-inline-actions">
             <Button
               variant="secondary"
@@ -1291,8 +1473,9 @@ export function Builder({
     );
   };
 
-  const propertyTitle =
-    selectedId === '$header'
+  const propertyTitle = selectedFieldLocation
+    ? selectedFieldLocation.field.label || 'Поле'
+    : selectedId === '$header'
       ? 'Шапка карточки'
       : selectedId === '$footer'
         ? 'Нижняя панель'
@@ -1305,240 +1488,284 @@ export function Builder({
               : 'Свойства';
   return (
     <EditorValidityProvider onValidityChange={onValidityChange}>
-      <PreviewDataProvider data={data} onDataChange={onDataChange}>
-        <div className={`builder ${mobilePanel ? `builder--show-${mobilePanel}` : ''}`}>
-          <div className="builder-mobile-controls">
-            <Button
-              variant={mobilePanel === 'tree' ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setMobilePanel(mobilePanel === 'tree' ? null : 'tree')}
-            >
-              <ListTree size={15} />
-              Структура
-            </Button>
-            <span>Предпросмотр</span>
-            <Button
-              variant={mobilePanel === 'properties' ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setMobilePanel(mobilePanel === 'properties' ? null : 'properties')}
-            >
-              <SlidersHorizontal size={15} />
-              Свойства
-            </Button>
-          </div>
-          <aside className="builder-structure" aria-label="Структура карточки">
-            <div className="builder-panel-heading">
-              <div>
-                <h2>Структура</h2>
-                <p>Соберите карточку из блоков</p>
-              </div>
-              <IconButton label="Настройки сплита" onClick={() => select('$shell')}>
-                <Settings2 size={17} />
-              </IconButton>
-            </div>
-            <div className="builder-structure-content">
-              <div className="builder-tree-shell">
-                <button
-                  type="button"
-                  className={`builder-static-node ${selectedId === '$header' ? 'is-selected' : ''}`}
-                  onClick={() => select('$header')}
-                >
-                  <LayoutPanelTop size={16} />
-                  <span>Шапка карточки</span>
-                  <span className="builder-system-badge">Системная</span>
-                </button>
-              </div>
-              <div className="builder-tree-group-label">
-                Содержимое <span>{definition.tabs.length} вкладки</span>
-              </div>
-              <div className="builder-tabs-tree">
-                {definition.tabs.map((tab) => (
-                  <div key={tab.id} className="builder-tab-tree">
-                    <button
-                      type="button"
-                      className={`builder-tab-row ${selectedId === tab.id ? 'is-selected' : ''}`}
-                      onClick={() => select(tab.id)}
-                    >
-                      <ChevronDown size={14} />
-                      <span className="builder-tab-mark" />
-                      <span>{tab.title || 'Без названия'}</span>
-                      <span className="builder-tree-count">{tab.nodes.length}</span>
-                    </button>
-                    {tab.nodes.map((node) => renderNode(node, 0))}
-                    {tab.nodes.length === 0 && (
-                      <button
-                        type="button"
-                        className="builder-tab-empty"
-                        onClick={() => {
-                          select(tab.id);
-                          setPaletteOpen(true);
-                        }}
-                      >
-                        <Plus size={14} />
-                        Добавить первый блок
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="builder-add-tab">
+      <BuilderSelectionContext.Provider value={{ selectedId, select }}>
+        <EditorDragProvider definition={definition} onDrop={drop}>
+          <PreviewDataProvider data={data} onDataChange={onDataChange}>
+            <div className={`builder ${mobilePanel ? `builder--show-${mobilePanel}` : ''}`}>
+              <div className="builder-mobile-controls">
                 <Button
-                  variant="ghost"
+                  variant={mobilePanel === 'tree' ? 'primary' : 'secondary'}
                   size="sm"
-                  onClick={() => {
-                    const tab = { id: createId('tab'), title: 'Новая вкладка', nodes: [] };
-                    mutate((copy) => {
-                      copy.tabs.push(tab);
-                    });
-                    select(tab.id);
-                  }}
+                  onClick={() => setMobilePanel(mobilePanel === 'tree' ? null : 'tree')}
                 >
-                  <Plus size={14} />
-                  Новая вкладка
+                  <ListTree size={15} />
+                  Структура
+                </Button>
+                <span>Предпросмотр</span>
+                <Button
+                  variant={mobilePanel === 'properties' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setMobilePanel(mobilePanel === 'properties' ? null : 'properties')}
+                >
+                  <SlidersHorizontal size={15} />
+                  Свойства
                 </Button>
               </div>
-              <div className="builder-tree-shell builder-footer-tree">
-                <button
-                  type="button"
-                  className={`builder-static-node ${selectedId === '$footer' ? 'is-selected' : ''}`}
-                  onClick={() => select('$footer')}
-                >
-                  <PanelBottom size={16} />
-                  <span>Нижняя панель</span>
-                  {!definition.footer.show && <span className="builder-system-badge">Скрыта</span>}
-                </button>
-              </div>
-            </div>
-            <div className="builder-add-area">
-              <Button
-                variant="primary"
-                onClick={() => setPaletteOpen(!paletteOpen)}
-                disabled={definition.tabs.length === 0}
-              >
-                <Plus size={16} />
-                Добавить блок
-              </Button>
-              <p>
-                {selectedNode?.type === 'section'
-                  ? `В раздел «${selectedNode.title}»`
-                  : `Во вкладку «${activeTab?.title ?? '—'}»`}
-              </p>
-            </div>
-            {paletteOpen && (
-              <div className="builder-palette">
-                <div className="builder-palette-heading">
-                  <strong>Добавить блок</strong>
-                  <IconButton label="Закрыть список блоков" onClick={() => setPaletteOpen(false)}>
-                    <X size={15} />
+              <aside className="builder-structure" aria-label="Структура карточки">
+                <div className="builder-panel-heading">
+                  <div>
+                    <h2>Структура</h2>
+                    <p>Соберите карточку из блоков</p>
+                  </div>
+                  <IconButton label="Настройки сплита" onClick={() => select('$shell')}>
+                    <Settings2 size={17} />
                   </IconButton>
                 </div>
-                {(
-                  [
-                    'fields',
-                    'section',
-                    'text',
-                    'table',
-                    'callout',
-                    'metrics',
-                    'recordList',
-                    'documents',
-                    'widget',
-                  ] as const
-                )
-                  .filter((type) => catalog.nodeTypes.includes(type))
-                  .map((type) => {
-                    const Icon = nodeIcons[type];
-                    const descriptions = {
-                      fields: 'Реквизиты с подписями',
-                      section: 'Группировка и сворачивание',
-                      text: 'Длинный текст из данных',
-                      table: 'Связанные записи',
-                      widget: 'Микрофронт в карточке',
-                      callout: 'Информация и предупреждения',
-                      metrics: 'Суммы, ставки и пояснения',
-                      recordList: 'Контрагенты и связанные сущности',
-                      documents: 'Файлы, статусы и связанные ссылки',
-                    };
-                    return (
-                      <button
-                        type="button"
-                        key={type}
-                        disabled={type === 'widget' && embeddedWidgets.length === 0}
-                        onClick={() => addNode(type)}
-                        className="builder-palette-item"
-                      >
-                        <span className="builder-palette-icon">
-                          <Icon size={18} />
-                        </span>
-                        <span>
-                          <strong>{nodeLabels[type]}</strong>
-                          <small>{descriptions[type]}</small>
-                        </span>
-                        <Plus size={14} />
-                      </button>
-                    );
-                  })}
-              </div>
-            )}
-            <details className="builder-issues" open={issues.some((issue) => issue.severity === 'error')}>
-              <summary>
-                <CircleAlert size={15} />
-                <span>{issues.length === 0 ? 'Проверка пройдена' : `Замечания · ${issues.length}`}</span>
-                <ChevronDown size={14} />
-              </summary>
-              {issues.length === 0 ? (
-                <p>Структура и привязки корректны.</p>
-              ) : (
-                <div className="builder-issues-list">
-                  {issues.map((issue, index) => (
+                <div className="builder-structure-content">
+                  <div className="builder-tree-shell">
                     <button
-                      key={`${issue.path}-${index}`}
                       type="button"
-                      className={`builder-issue builder-issue--${issue.severity}`}
+                      className={`builder-static-node ${selectedId === '$header' ? 'is-selected' : ''}`}
+                      onClick={() => select('$header')}
+                    >
+                      <LayoutPanelTop size={16} />
+                      <span>Шапка карточки</span>
+                      <span className="builder-system-badge">Системная</span>
+                    </button>
+                    <div className="builder-tree-fields">
+                      {definition.header.fields?.map((field) => (
+                        <button
+                          key={field.id}
+                          type="button"
+                          className={`builder-tree-field ${selectedId === field.id ? 'is-selected' : ''}`}
+                          onClick={() => select(field.id)}
+                        >
+                          {field.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="builder-tree-group-label">
+                    Содержимое <span>{definition.tabs.length} вкладки</span>
+                  </div>
+                  <div className="builder-tabs-tree">
+                    {definition.tabs.map((tab) => (
+                      <div key={tab.id} className="builder-tab-tree">
+                        <NodeDropZone
+                          target={{ containerId: tab.id, index: tab.nodes.length }}
+                          label={`Во вкладку «${tab.title}»`}
+                        >
+                          <button
+                            type="button"
+                            className={`builder-tab-row ${selectedId === tab.id ? 'is-selected' : ''}`}
+                            onClick={() => select(tab.id)}
+                          >
+                            <ChevronDown size={14} />
+                            <span className="builder-tab-mark" />
+                            <span>{tab.title || 'Без названия'}</span>
+                            <span className="builder-tree-count">{tab.nodes.length}</span>
+                          </button>
+                        </NodeDropZone>
+                        {tab.nodes.map((node, index) => renderNode(node, 0, tab.id, index))}
+                        <NodeDropZone
+                          target={{ containerId: tab.id, index: tab.nodes.length }}
+                          label={`В конец вкладки «${tab.title}»`}
+                        />
+                        {tab.nodes.length === 0 && (
+                          <button
+                            type="button"
+                            className="builder-tab-empty"
+                            onClick={() => {
+                              select(tab.id);
+                              setPaletteOpen(true);
+                            }}
+                          >
+                            <Plus size={14} />
+                            Добавить первый блок
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="builder-add-tab">
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => {
-                        select(issueTarget(issue));
-                        setMobilePanel('properties');
+                        const tab = { id: createId('tab'), title: 'Новая вкладка', nodes: [] };
+                        mutate((copy) => {
+                          copy.tabs.push(tab);
+                        });
+                        select(tab.id);
                       }}
                     >
-                      <span className="builder-issue-dot" />
-                      <span>{issue.message}</span>
-                      <ChevronRight size={13} />
+                      <Plus size={14} />
+                      Новая вкладка
+                    </Button>
+                  </div>
+                  <div className="builder-tree-shell builder-footer-tree">
+                    <button
+                      type="button"
+                      className={`builder-static-node ${selectedId === '$footer' ? 'is-selected' : ''}`}
+                      onClick={() => select('$footer')}
+                    >
+                      <PanelBottom size={16} />
+                      <span>Нижняя панель</span>
+                      {!definition.footer.show && <span className="builder-system-badge">Скрыта</span>}
                     </button>
-                  ))}
+                  </div>
                 </div>
-              )}
-            </details>
-          </aside>
-          <main className="builder-preview" aria-label="Предпросмотр карточки">
-            {children}
-          </main>
-          <aside className="builder-properties" aria-label="Свойства выбранного элемента">
-            <div className="builder-panel-heading">
-              <div>
-                <h2>{propertyTitle}</h2>
-              </div>
-              <span className="builder-properties-icon">
-                <SlidersHorizontal size={17} />
-              </span>
-            </div>
-            <div className="builder-properties-content">
-              {selectedIssues.length > 0 && (
-                <div className="builder-selected-issues">
-                  {selectedIssues.map((issue, index) => (
-                    <p key={index}>
-                      <CircleAlert size={14} />
-                      {issue.message}
-                    </p>
-                  ))}
+                <div className="builder-add-area">
+                  <Button
+                    variant="primary"
+                    onClick={() => setPaletteOpen(!paletteOpen)}
+                    disabled={definition.tabs.length === 0}
+                  >
+                    <Plus size={16} />
+                    Добавить блок
+                  </Button>
+                  <p>
+                    {selectedNode?.type === 'section'
+                      ? `В раздел «${selectedNode.title}»`
+                      : `Во вкладку «${activeTab?.title ?? '—'}»`}
+                  </p>
                 </div>
-              )}
-              <FieldErrorScope issues={issues} path={located?.path ?? '$'}>
-                {renderProperties()}
-              </FieldErrorScope>
+                {paletteOpen && (
+                  <div className="builder-palette">
+                    <div className="builder-palette-heading">
+                      <strong>Добавить блок</strong>
+                      <IconButton label="Закрыть список блоков" onClick={() => setPaletteOpen(false)}>
+                        <X size={15} />
+                      </IconButton>
+                    </div>
+                    {(
+                      [
+                        'fields',
+                        'section',
+                        'text',
+                        'table',
+                        'callout',
+                        'metrics',
+                        'recordList',
+                        'documents',
+                        'widget',
+                        'erpTable',
+                        'badge',
+                        'avatar',
+                        'image',
+                        'progress',
+                        'divider',
+                      ] as const
+                    )
+                      .filter(
+                        (type) =>
+                          catalog.nodeTypes.includes(type) &&
+                          (catalog.authoringNodeTypes ?? catalog.nodeTypes).includes(type),
+                      )
+                      .map((type) => {
+                        const Icon = nodeIcons[type];
+                        const descriptions = {
+                          fields: 'Реквизиты с подписями',
+                          section: 'Группировка и сворачивание',
+                          text: 'Длинный текст из данных',
+                          table: 'Связанные записи',
+                          widget: 'Микрофронт в карточке',
+                          callout: 'Информация и предупреждения',
+                          metrics: 'Суммы, ставки и пояснения',
+                          recordList: 'Контрагенты и связанные сущности',
+                          documents: 'Файлы, статусы и связанные ссылки',
+                          erpTable: 'Метаданные и строки из ERP',
+                          badge: 'Статус или короткая метка',
+                          avatar: 'Имя и фотография',
+                          image: 'Изображение по ссылке',
+                          progress: 'Числовой прогресс',
+                          divider: 'Визуальное разделение',
+                        };
+                        return (
+                          <PaletteDragItem
+                            type={type}
+                            label={nodeLabels[type]}
+                            key={type}
+                            disabled={type === 'widget' && embeddedWidgets.length === 0}
+                            onClick={() => addNode(type)}
+                          >
+                            <span className="builder-palette-icon">
+                              <Icon size={18} />
+                            </span>
+                            <span>
+                              <strong>{nodeLabels[type]}</strong>
+                              <small>{descriptions[type]}</small>
+                            </span>
+                            <Plus size={14} />
+                          </PaletteDragItem>
+                        );
+                      })}
+                  </div>
+                )}
+                <details className="builder-issues" open={issues.some((issue) => issue.severity === 'error')}>
+                  <summary>
+                    <CircleAlert size={15} />
+                    <span>{issues.length === 0 ? 'Проверка пройдена' : `Замечания · ${issues.length}`}</span>
+                    <ChevronDown size={14} />
+                  </summary>
+                  {issues.length === 0 ? (
+                    <p>Структура и привязки корректны.</p>
+                  ) : (
+                    <div className="builder-issues-list">
+                      {issues.map((issue, index) => (
+                        <button
+                          key={`${issue.path}-${index}`}
+                          type="button"
+                          className={`builder-issue builder-issue--${issue.severity}`}
+                          onClick={() => {
+                            select(issueTarget(issue));
+                            setMobilePanel('properties');
+                          }}
+                        >
+                          <span className="builder-issue-dot" />
+                          <span>{issue.message}</span>
+                          <ChevronRight size={13} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </details>
+              </aside>
+              <main className="builder-preview" aria-label="Предпросмотр карточки">
+                {children}
+                <div className="builder-drag-status" role="status">
+                  {dragMessage}
+                </div>
+              </main>
+              <aside className="builder-properties" aria-label="Свойства выбранного элемента">
+                <div className="builder-panel-heading">
+                  <div>
+                    <h2>{propertyTitle}</h2>
+                  </div>
+                  <span className="builder-properties-icon">
+                    <SlidersHorizontal size={17} />
+                  </span>
+                </div>
+                <div className="builder-properties-content">
+                  {selectedIssues.length > 0 && (
+                    <div className="builder-selected-issues">
+                      {selectedIssues.map((issue, index) => (
+                        <p key={index}>
+                          <CircleAlert size={14} />
+                          {issue.message}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  <FieldErrorScope issues={issues} path={located?.path ?? '$'}>
+                    {renderProperties()}
+                  </FieldErrorScope>
+                </div>
+              </aside>
             </div>
-          </aside>
-        </div>
-      </PreviewDataProvider>
+          </PreviewDataProvider>
+        </EditorDragProvider>
+      </BuilderSelectionContext.Provider>
     </EditorValidityProvider>
   );
 }

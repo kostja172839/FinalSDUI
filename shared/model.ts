@@ -76,6 +76,61 @@ export interface TableNode extends NodeBase {
   searchable: boolean;
   pageSize: number;
 }
+/** Metadata and rows are loaded by the host's ErpTableWidget itself. */
+export interface ErpTableOptions {
+  isTabs?: boolean;
+  isRegistryPageUsage?: boolean;
+  customOffset?: number;
+  defaultRowSize?: 'small' | 'medium' | 'big';
+  showInControlRowSize?: boolean;
+  paginationSize?: { size?: 's' | 'xs'; slots?: 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 };
+  stend?: 'alpha' | 'sigma' | null;
+  enableFilters?: boolean;
+  enableColumns?: boolean;
+  isUrlFiltersEnabled?: boolean;
+  tableFullscreenZIndex?: number;
+  defaultSelectRows?: (string | number)[];
+  defaultQueryFiltres?: JsonValue[];
+  techFilters?: JsonValue[];
+  initialFilters?: JsonValue[];
+  mfAdditionalProps?: Record<string, JsonValue>;
+  customParams?: Record<string, JsonValue>;
+}
+export interface ErpTableNode extends NodeBase, WidgetInvocation {
+  type: 'erpTable';
+  tableUrl: ValueSource;
+  height: number;
+  options?: ErpTableOptions;
+}
+export type DisplayTone = 'neutral' | 'info' | 'success' | 'warning' | 'error';
+export interface BadgeNode extends NodeBase {
+  type: 'badge';
+  value: ValueSource;
+  tone: DisplayTone;
+}
+export interface AvatarNode extends NodeBase {
+  type: 'avatar';
+  name: ValueSource;
+  src?: ValueSource;
+  size: 's' | 'm' | 'l';
+}
+export interface ImageNode extends NodeBase {
+  type: 'image';
+  src: ValueSource;
+  alt: ValueSource;
+  height: number;
+  fit: 'contain' | 'cover';
+}
+export interface ProgressNode extends NodeBase {
+  type: 'progress';
+  value: ValueSource;
+  max: number;
+  showValue: boolean;
+}
+export interface DividerNode extends NodeBase {
+  type: 'divider';
+  label?: string;
+}
 export interface WidgetNode extends NodeBase, WidgetInvocation {
   type: 'widget';
   widgetId: string;
@@ -118,6 +173,12 @@ export type ContentNode =
   | SectionNode
   | TextNode
   | TableNode
+  | ErpTableNode
+  | BadgeNode
+  | AvatarNode
+  | ImageNode
+  | ProgressNode
+  | DividerNode
   | WidgetNode
   | CalloutNode
   | MetricsNode
@@ -227,6 +288,8 @@ export interface Catalog {
   datasets: DatasetDescriptor[];
   widgets: WidgetDescriptor[];
   nodeTypes: string[];
+  /** Optional curated creation palette; existing supported nodes remain readable. */
+  authoringNodeTypes?: string[];
   actions?: HostActionDescriptor[];
 }
 export interface HostActionDescriptor {

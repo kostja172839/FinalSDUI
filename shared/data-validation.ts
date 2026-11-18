@@ -5,8 +5,10 @@ import type {
   FieldFormat,
   SplitTemplate,
   ValueSource,
+  WidgetContext,
 } from './model';
-import { readPath, resolveBindingPath, resolveValue } from './values';
+import { readPath, resolveBindingPath, resolveValue, resolveWidgetInput } from './values';
+import { safeErpTableUrl, validateErpTableOptions } from './erp-table-contract';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -18,6 +20,7 @@ const isEmpty = (value: unknown) =>
 
 export function isValidDataHref(value: unknown): boolean {
   if (typeof value !== 'string' || !value.trim()) return false;
+  if (/[\\\u0000-\u001f\u007f]/.test(value)) return false;
   if (/^\/(?!\/)/.test(value) && !value.includes('\\')) return true;
   try {
     return ['http:', 'https:'].includes(new URL(value).protocol);
@@ -94,6 +97,7 @@ export function validateFieldValue(
 export function validateResolvedData(
   definition: SplitTemplate,
   data: Record<string, unknown>,
+  context?: WidgetContext,
 ): DataValidationIssue[] {
   const issues: DataValidationIssue[] = [];
   const dataPath = (source?: ValueSource, legacy?: string, prefix?: string) => {
@@ -211,6 +215,24 @@ export function validateResolvedData(
       }
     });
   };
+  const imageSource = (nodeId: string, source: ValueSource | undefined, path: string) => {
+    if (!source) return;
+    const value = resolveValue(data, source);
+    if (
+      value !== null &&
+      value !== undefined &&
+      value !== '' &&
+      (typeof value !== 'string' || !isValidDataHref(value))
+    )
+      add(
+        nodeId,
+        path,
+        'Для изображения нужна строка с HTTP/HTTPS адресом или путём от /.',
+        undefined,
+        undefined,
+        dataPath(source),
+      );
+  };
   const visit = (nodes: ContentNode[], path: string) =>
     nodes.forEach((node, index) => {
       const p = `${path}[${index}]`;
@@ -218,7 +240,76 @@ export function validateResolvedData(
       if (node.type === 'section') visit(node.children, `${p}.children`);
       else if (node.type === 'fields') fields(node.fields, data, node.id, `${p}.fields`);
       else if (node.type === 'metrics') fields(node.items, data, node.id, `${p}.items`);
-      else if (['table', 'recordList', 'documents'].includes(node.type))
+      else if (node.type === 'progress') {
+        const value = resolveValue(data, node.value);
+        const messages =
+          Array.isArray(value) || isRecord(value)
+            ? ['Ожидается конечное число, например 50.']
+            : validateFieldValue({ format: 'number', validation: { min: 0, max: node.max } }, value);
+        messages.forEach((message) =>
+          add(node.id, `${p}.value`, message, undefined, undefined, dataPath(node.value)),
+        );
+      } else if (node.type === 'badge' || node.type === 'avatar') {
+        const source = node.type === 'badge' ? node.value : node.name;
+        const value = resolveValue(data, source);
+        if (
+          value !== undefined &&
+          value !== null &&
+          value !== '' &&
+          !['string', 'number', 'boolean'].includes(typeof value) &&
+          !(isRecord(value) && typeof (value.name ?? value.label) === 'string')
+        )
+          add(
+            node.id,
+            `${p}.${node.type === 'badge' ? 'value' : 'name'}`,
+            'Ожидается текст, число или объект с name / label.',
+            undefined,
+            undefined,
+            dataPath(source),
+          );
+        if (node.type === 'avatar') imageSource(node.id, node.src, `${p}.src`);
+      } else if (node.type === 'image') {
+        imageSource(node.id, node.src, `${p}.src`);
+        const alt = resolveValue(data, node.alt);
+        if (alt !== null && alt !== undefined && typeof alt !== 'string')
+          add(
+            node.id,
+            `${p}.alt`,
+            'Описание изображения должно быть текстом.',
+            undefined,
+            undefined,
+            dataPath(node.alt),
+          );
+      } else if (node.type === 'erpTable') {
+        const usesContext = (source: ValueSource) =>
+          source.kind === 'binding' && source.path.startsWith('$context.');
+        if (
+          (context || !usesContext(node.tableUrl)) &&
+          !safeErpTableUrl(resolveValue(context ? { ...data, $context: context } : data, node.tableUrl))
+        )
+          add(
+            node.id,
+            `${p}.tableUrl`,
+            'Укажите URL таблицы: путь /api/... или HTTP/HTTPS адрес.',
+            undefined,
+            undefined,
+            dataPath(node.tableUrl),
+          );
+        const props = context
+          ? node.props
+          : Object.fromEntries(Object.entries(node.props ?? {}).filter(([, source]) => !usesContext(source)));
+        const params = resolveWidgetInput(
+          { props },
+          data,
+          context ?? { entityId: '', entityType: definition.entityType, instanceId: '', locale: 'ru-RU' },
+        ).data;
+        for (const issue of validateErpTableOptions({ ...node.options, ...params }))
+          add(
+            node.id,
+            `${p}.${node.props && Object.hasOwn(params, issue.path.split('.')[0]) ? 'props' : 'options'}${issue.path ? `.${issue.path}` : ''}`,
+            issue.message,
+          );
+      } else if (['table', 'recordList', 'documents'].includes(node.type))
         rows(node as Extract<ContentNode, { type: 'table' | 'recordList' | 'documents' }>, p);
     });
   const header = definition.header;

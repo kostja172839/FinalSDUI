@@ -48,7 +48,11 @@ import { demoWidgetRegistry, type WidgetRegistry } from './widgets';
 import { getFooterActions, getHeaderActions } from '../../shared/actions';
 import { ActionMenu } from './ActionMenu';
 import { FooterButtons } from './FooterButtons';
+import { DisplayBlock } from './DisplayBlocks';
+import { ErpTableHost, type ErpTableAdapter } from './erp-table';
 import './runtime.css';
+import { editorSelection, fieldSelectionClass } from './editorSelection';
+import { EditorNodeFrame, EditorContainerDrop } from '../builder/dragAndDrop';
 
 // FinAI Accordion derives its DOM IDs from numeric event keys.
 let nextAccordionKey = 0;
@@ -256,7 +260,17 @@ export function WidgetHost({
   );
 }
 
-function ReadOnlyTable({ node, data }: { node: TableNode; data: Record<string, unknown> }) {
+function ReadOnlyTable({
+  node,
+  data,
+  selectedNodeId,
+  onSelectNode,
+}: {
+  node: TableNode;
+  data: Record<string, unknown>;
+  selectedNodeId?: string;
+  onSelectNode?: (id: string) => void;
+}) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<{ binding: string; desc: boolean } | null>(null);
@@ -365,14 +379,17 @@ function ReadOnlyTable({ node, data }: { node: TableNode; data: Record<string, u
                 enableResizing: true,
                 enableEditing: false,
                 renderCell: (value: unknown) => (
-                  <>
+                  <div
+                    {...editorSelection(column.id, column.label, selectedNodeId, onSelectNode)}
+                    className={fieldSelectionClass(column.id, selectedNodeId, onSelectNode)}
+                  >
                     <FormattedValue value={(value as { raw: unknown }).raw} format={column.format} />
                     <div className="runtime-field-errors">
                       {validateFieldValue(column, (value as { raw: unknown }).raw).map((message) => (
                         <p key={message}>{message}</p>
                       ))}
                     </div>
-                  </>
+                  </div>
                 ),
               }))}
             />
@@ -433,6 +450,8 @@ interface RenderContext {
   onWidgetEvent?: (event: WidgetRuntimeEvent) => void;
   onOpenWidget?: (intent: OpenWidgetIntent) => void;
   dataIssues: DataValidationIssue[];
+  erpTableAdapter?: ErpTableAdapter;
+  tableRefreshToken?: number;
 }
 function FieldDataErrors({
   issues,
@@ -490,7 +509,11 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
             {node.title && <h3 className="block-heading">{node.title}</h3>}
             <dl className="field-grid" style={{ '--columns': node.columns } as CSSProperties}>
               {node.fields.map((field) => (
-                <div key={field.id} className="detail-field">
+                <div
+                  key={field.id}
+                  {...editorSelection(field.id, field.label, context.selectedNodeId, context.onSelectNode)}
+                  className={`detail-field ${fieldSelectionClass(field.id, context.selectedNodeId, context.onSelectNode)}`}
+                >
                   <dt>{field.label}</dt>
                   <dd>
                     <FormattedValue
@@ -555,7 +578,39 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
         );
         break;
       case 'table':
-        content = <ReadOnlyTable node={node} data={data} />;
+        content = (
+          <ReadOnlyTable
+            node={node}
+            data={data}
+            selectedNodeId={context.selectedNodeId}
+            onSelectNode={context.onSelectNode}
+          />
+        );
+        break;
+      case 'erpTable':
+        content = (
+          <>
+            <h3 className="block-heading">{node.title}</h3>
+            <ErpTableHost
+              node={node}
+              data={data}
+              context={context.widgetContext}
+              adapter={context.erpTableAdapter}
+              refreshToken={context.tableRefreshToken}
+              onEvent={(event) => {
+                if (event.type === 'dataChanged') context.onRefresh?.();
+                else context.onWidgetEvent?.(event);
+              }}
+            />
+          </>
+        );
+        break;
+      case 'badge':
+      case 'avatar':
+      case 'image':
+      case 'progress':
+      case 'divider':
+        content = <DisplayBlock node={node} data={data} />;
         break;
       case 'widget':
         content = (
@@ -589,6 +644,8 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
             widgetContext={context.widgetContext}
             onOpenWidget={context.onOpenWidget}
             dataIssues={context.dataIssues}
+            selectedNodeId={context.selectedNodeId}
+            onSelectNode={context.onSelectNode}
             renderValue={(value, format) => <FormattedValue value={value} format={format} />}
           />
         );
@@ -597,20 +654,22 @@ function ContentBlock({ node, context }: { node: ContentNode; context: RenderCon
         content = <div className="block-error">Этот блок не поддерживается текущим клиентом</div>;
     }
   return (
-    <section
-      data-node-id={node.id}
-      className={`runtime-block runtime-${node.type} ${context.selectedNodeId === node.id ? 'is-selected' : ''} ${context.onSelectNode ? 'can-select' : ''}`}
-      onClick={
-        context.onSelectNode
-          ? (event) => {
-              event.stopPropagation();
-              context.onSelectNode?.(node.id);
-            }
-          : undefined
-      }
-    >
-      <BlockBoundary resetKey={JSON.stringify(node)}>{content}</BlockBoundary>
-    </section>
+    <EditorNodeFrame nodeId={node.id} label={node.title}>
+      <section
+        data-node-id={node.id}
+        className={`runtime-block runtime-${node.type} ${context.selectedNodeId === node.id ? 'is-selected' : ''} ${context.onSelectNode ? 'can-select' : ''}`}
+        onClick={
+          context.onSelectNode
+            ? (event) => {
+                event.stopPropagation();
+                context.onSelectNode?.(node.id);
+              }
+            : undefined
+        }
+      >
+        <BlockBoundary resetKey={JSON.stringify(node)}>{content}</BlockBoundary>
+      </section>
+    </EditorNodeFrame>
   );
 }
 
@@ -627,9 +686,19 @@ export interface SplitViewProps {
   actionDescriptors?: HostActionDescriptor[];
   floating?: boolean;
   previewWidth?: number;
+  erpTableAdapter?: ErpTableAdapter;
+  tableRefreshToken?: number;
 }
 function includesNode(nodes: ContentNode[], id: string): boolean {
-  return nodes.some((node) => node.id === id || (node.type === 'section' && includesNode(node.children, id)));
+  return nodes.some(
+    (node) =>
+      node.id === id ||
+      ((node.type === 'fields' || node.type === 'recordList') &&
+        node.fields.some((field) => field.id === id)) ||
+      (node.type === 'metrics' && node.items.some((field) => field.id === id)) ||
+      (node.type === 'table' && node.columns.some((field) => field.id === id)) ||
+      (node.type === 'section' && includesNode(node.children, id)),
+  );
 }
 export function SplitView({
   document: doc,
@@ -644,6 +713,8 @@ export function SplitView({
   actionDescriptors,
   floating = false,
   previewWidth,
+  erpTableAdapter,
+  tableRefreshToken,
 }: SplitViewProps) {
   const panelPrefix = useId();
   const [activeTab, setActiveTab] = useState(doc.definition.tabs[0]?.id ?? '');
@@ -671,6 +742,17 @@ export function SplitView({
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = scrollPositions.current.get(activeTab) ?? 0;
   }, [activeTab]);
+  useLayoutEffect(() => {
+    if (!onSelectNode || !selectedNodeId || !root.current || !body.current) return;
+    const selected = Array.from(
+      root.current.querySelectorAll<HTMLElement>('[data-node-id],[data-field-id]'),
+    ).find(
+      (element) => element.dataset.nodeId === selectedNodeId || element.dataset.fieldId === selectedNodeId,
+    );
+    // A selection can switch tabs or await the server preview. Scroll only after its DOM is visible.
+    if (selected && body.current.contains(selected) && selected.getClientRects().length)
+      selected.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selectedNodeId, activeTab, doc.definition, onSelectNode]);
   useEffect(() => {
     if (!fullscreen) return;
     priorFocus.current = window.document.activeElement as HTMLElement;
@@ -692,8 +774,8 @@ export function SplitView({
     [doc.entityId, doc.definition.entityType, doc.instanceId],
   );
   const dataIssues = useMemo(
-    () => validateResolvedData(doc.definition, doc.data),
-    [doc.definition, doc.data],
+    () => validateResolvedData(doc.definition, doc.data, widgetContext),
+    [doc.definition, doc.data, widgetContext],
   );
   const context: RenderContext = {
     document: doc,
@@ -705,6 +787,8 @@ export function SplitView({
     onWidgetEvent,
     onOpenWidget,
     dataIssues,
+    erpTableAdapter,
+    tableRefreshToken,
   };
   const resize = (event: React.PointerEvent<HTMLDivElement>) => {
     const handle = event.currentTarget;
@@ -843,7 +927,11 @@ export function SplitView({
             {!!doc.definition.header.fields?.length && (
               <dl className="field-grid header-meta" style={{ '--columns': 3 } as CSSProperties}>
                 {doc.definition.header.fields.map((field) => (
-                  <div key={field.id} className="detail-field">
+                  <div
+                    key={field.id}
+                    {...editorSelection(field.id, field.label, selectedNodeId, onSelectNode)}
+                    className={`detail-field ${fieldSelectionClass(field.id, selectedNodeId, onSelectNode)}`}
+                  >
                     <dt>{field.label}</dt>
                     <dd>
                       <FormattedValue
@@ -937,6 +1025,7 @@ export function SplitView({
                   {onSelectNode && <span>Выберите «Добавить блок» в структуре слева</span>}
                 </div>
               )}
+              <EditorContainerDrop containerId={tab.id} label={`В конец вкладки «${tab.title}»`} />
             </div>
           ))}
         </div>
