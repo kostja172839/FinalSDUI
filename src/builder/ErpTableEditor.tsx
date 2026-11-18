@@ -2,6 +2,7 @@ import type { Catalog, ErpTableNode, ErpTableOptions, WidgetDescriptor } from '.
 import { Button, Input, Select, Toggle } from '../ui';
 import { ValueSourceEditor } from './ValueSourceEditor';
 import { WidgetInvocationEditor } from './WidgetInvocationEditor';
+import { ErpTableConnectionPanel } from './ErpTableConnectionPanel';
 import { connectExpensesDemo } from '../demo/erp-table-examples';
 
 const descriptor: WidgetDescriptor = {
@@ -97,6 +98,7 @@ export function ErpTableEditor({
         hint="Адрес, который ожидает ErpTableWidget, например /api/table/registry. Метаданные и строки загружает сам компонент."
         onChange={(tableUrl) => onChange({ ...node, tableUrl })}
       />
+      <ErpTableConnectionPanel source={node.tableUrl} />
       {node.tableUrl.kind === 'literal' && !node.tableUrl.value && (
         <Button
           size="sm"

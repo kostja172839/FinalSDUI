@@ -567,6 +567,25 @@
   color: var(--muted, #77818b);
   margin: 0;
 }
+.erp-connection-panel {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.erp-connection-panel details,
+.erp-connection-panel pre {
+  max-width: 100%;
+}
+.erp-connection-panel pre {
+  white-space: pre-wrap;
+  user-select: all;
+}
+.erp-connection-panel details > summary {
+  cursor: pointer;
+}
 .builder-field-description > span {
   display: block;
   margin-top: 6px;

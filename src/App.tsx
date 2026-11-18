@@ -60,6 +60,7 @@ import { demoWidgetRegistry } from './runtime/widgets';
 import { canonicalizeDefinition } from '../shared/values';
 import { contractExampleDefinition, contractExampleData } from '../shared/seeds';
 import type { ErpTableAdapter } from './runtime/erp-table';
+import { LocalErpTableConnections } from './runtime/erp-table-connections';
 import { connectExpensesDemo } from './demo/erp-table-examples';
 import { validateWidgetInputs } from '../shared/widget-input-validation';
 
@@ -150,7 +151,18 @@ export interface AppProps {
   erpTableAdapter?: ErpTableAdapter;
 }
 
-export default function App({ erpTableAdapter }: AppProps = {}) {
+export default function App(props: AppProps = {}) {
+  const studio = <Studio {...props} />;
+  return import.meta.env?.DEV &&
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname) ? (
+    <LocalErpTableConnections>{studio}</LocalErpTableConnections>
+  ) : (
+    studio
+  );
+}
+
+function Studio({ erpTableAdapter }: AppProps) {
   const [catalog, setCatalog] = useState<Catalog>();
   const [records, setRecords] = useState<TemplateRecord[]>([]);
   const [entities, setEntities] = useState<EntitySummary[]>([]);

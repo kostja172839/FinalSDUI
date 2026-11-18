@@ -16,6 +16,7 @@ import { AlertCircle, Table2 } from 'lucide-react';
 import type { ErpTableNode, WidgetContext, WidgetRuntimeEvent } from '../../shared/model';
 import { createErpTableCallbacks, resolveErpTableInput } from './erp-table-data';
 import { resolveValue } from '../../shared/values';
+import { resolveTableRoute, useErpTableConnections } from './erp-table-connections';
 export {
   ERP_TABLE_DATA_PROPS,
   ERP_TABLE_EVENTS,
@@ -63,6 +64,7 @@ class ErpTableBoundary extends Component<{ children: ReactNode; onError: () => v
 }
 
 interface InstanceProps {
+  tableUrl: string;
   node: ErpTableNode;
   data: Record<string, unknown>;
   context: WidgetContext;
@@ -71,7 +73,7 @@ interface InstanceProps {
   refreshToken?: number;
 }
 const ErpTableInstance = forwardRef<ErpTableHandle, InstanceProps>(function ErpTableInstance(
-  { node, data, context, adapter, onEvent, refreshToken },
+  { node, data, context, adapter, onEvent, refreshToken, tableUrl },
   forwardedRef,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -168,7 +170,7 @@ const ErpTableInstance = forwardRef<ErpTableHandle, InstanceProps>(function ErpT
       ...callbackData,
       activeSplit,
       tableViewPort: width,
-      tableUrl: String(inputResult.input.data.tableUrl),
+      tableUrl,
     };
   }
   const message = inputResult.error || (error?.token === token ? error.message : '');
@@ -216,6 +218,7 @@ export function ErpTableHost({
   handleRef?: Ref<ErpTableHandle>;
   refreshToken?: number;
 }) {
+  const connections = useErpTableConnections();
   if (!adapter)
     return (
       <div className="runtime-empty" style={{ minHeight: node.height }}>
@@ -227,9 +230,25 @@ export function ErpTableHost({
       </div>
     );
   const url = resolveValue({ ...data, $context: context }, node.tableUrl);
+  const route = resolveTableRoute(
+    typeof url === 'string' ? url : '',
+    connections,
+    connections ? window.location.origin : '',
+  );
+  if (route.kind === 'pending' || route.kind === 'error')
+    return (
+      <div
+        style={{ minHeight: node.height }}
+        className={route.kind === 'pending' ? 'runtime-note' : 'block-error'}
+        role={route.kind === 'pending' ? 'status' : 'alert'}
+      >
+        {route.kind === 'pending' ? 'Загрузка подключений таблицы…' : route.message}
+      </div>
+    );
   return (
     <ErpTableInstance
-      key={`${node.id}:${context.entityId}:${context.instanceId}:${typeof url === 'string' ? url : ''}`}
+      key={`${node.id}:${context.entityId}:${context.instanceId}:${route.url}`}
+      tableUrl={route.url}
       ref={handleRef}
       node={node}
       data={data}
