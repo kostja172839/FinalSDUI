@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { decodeTablePath } from '../shared/erp-dev-path';
+import { decodeTablePath, isErpTablePath } from '../shared/erp-dev-path';
 
 const prefix = '/__erp_tables';
 const loopbackPeers = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -12,6 +12,7 @@ interface Connection {
   id: string;
   baseUrl: string;
   scope: string;
+  originOnly: boolean;
   cookie?: string;
 }
 
@@ -46,9 +47,9 @@ function connectionsFromEnv(env: Environment): Connection[] {
         throw new Error('Проверьте уникальность и формат id в ERP_TABLE_CONNECTIONS.');
       }
       const raw = profile.baseUrl;
-      const path = typeof raw === 'string' && /^https:\/\/[^/?#\\\s]+(\/[^?#\s]*)$/u.exec(raw)?.[1];
-      if (!path || path === '/' || decodeTablePath(path) === undefined) {
-        throw new Error(`Укажите HTTPS baseUrl с путём к API таблиц для ${profile.id}.`);
+      const match = typeof raw === 'string' && /^https:\/\/[^/?#\\\s]+(\/[^?#\s]*)?$/u.exec(raw);
+      if (!match || decodeTablePath(match[1] ?? '/') === undefined) {
+        throw new Error(`Укажите HTTPS-адрес стенда или путь к его API в baseUrl профиля ${profile.id}.`);
       }
       let url: URL;
       try {
@@ -78,7 +79,7 @@ function connectionsFromEnv(env: Environment): Connection[] {
       }
       ids.add(profile.id);
       bases.add(scope);
-      return { id: profile.id, baseUrl, scope, cookie };
+      return { id: profile.id, baseUrl, scope, originOnly: url.pathname === '/', cookie };
     })
     .sort((a, b) => b.scope.length - a.scope.length);
 }
@@ -119,13 +120,83 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+function isRowQuery(body: string): boolean {
+  try {
+    const input = JSON.parse(body);
+    const page = input?.pageable;
+    return (
+      Number.isSafeInteger(page?.offset) &&
+      page.offset >= 0 &&
+      Number.isSafeInteger(page?.limit) &&
+      page.limit > 0 &&
+      Object.keys(input).every((key) => ['sorts', 'filters', 'pageable'].includes(key)) &&
+      (input.sorts === undefined || Array.isArray(input.sorts)) &&
+      (input.filters === undefined || Array.isArray(input.filters))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function connectionFailure(error: unknown): GatewayError {
+  const cause = error instanceof Error ? error.cause : undefined;
+  const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
+  switch (code) {
+    case 'ENOTFOUND':
+    case 'EAI_AGAIN':
+      return new GatewayError(
+        502,
+        'DNS не смог определить адрес стенда. Проверьте имя в URL и доступ к корпоративной сети.',
+      );
+    case 'CERT_HAS_EXPIRED':
+    case 'CERT_NOT_YET_VALID':
+    case 'DEPTH_ZERO_SELF_SIGNED_CERT':
+    case 'SELF_SIGNED_CERT_IN_CHAIN':
+    case 'UNABLE_TO_VERIFY_LEAF_SIGNATURE':
+    case 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY':
+    case 'ERR_TLS_CERT_ALTNAME_INVALID':
+      return new GatewayError(
+        502,
+        'Node.js не смог проверить TLS-сертификат стенда. Проверьте домен, срок действия сертификата и доверие к корпоративному центру сертификации.',
+      );
+    case 'ECONNREFUSED':
+    case 'ECONNRESET':
+    case 'EHOSTUNREACH':
+    case 'ENETUNREACH':
+    case 'UND_ERR_SOCKET':
+      return new GatewayError(
+        502,
+        'Не удалось соединиться со стендом. Проверьте доступ к корпоративной сети и доступность сервиса.',
+      );
+    case 'ETIMEDOUT':
+    case 'UND_ERR_CONNECT_TIMEOUT':
+    case 'UND_ERR_HEADERS_TIMEOUT':
+      return new GatewayError(504, 'Истекло время ожидания ответа от стенда ERP.');
+    default:
+      return new GatewayError(
+        502,
+        'Локальный прокси не получил HTTP-ответ от стенда ERP. Проверьте доступ dev-сервера к стенду.',
+      );
+  }
+}
+
 export function createErpDevMiddleware(env: Environment, upstreamFetch: typeof fetch = fetch) {
-  const profiles = connectionsFromEnv(env);
+  let profiles: Connection[] = [];
+  let configurationError: GatewayError | undefined;
+  try {
+    profiles = connectionsFromEnv(env);
+  } catch (error) {
+    configurationError = new GatewayError(
+      503,
+      error instanceof Error ? error.message : 'Проверьте настройки подключений ERP в .env.local.',
+    );
+  }
   async function handle(req: IncomingMessage, res: ServerResponse, rawUrl: string) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
     verifyLocalRequest(req);
+    if (configurationError) throw configurationError;
     const queryStart = rawUrl.indexOf('?');
     const path = queryStart === -1 ? rawUrl : rawUrl.slice(0, queryStart);
     const query = queryStart === -1 ? '' : rawUrl.slice(queryStart);
@@ -146,14 +217,27 @@ export function createErpDevMiddleware(env: Environment, upstreamFetch: typeof f
     const [, , id, ...segments] = path.split('/');
     const connection = profiles.find((profile) => profile.id === id);
     if (!connection) throw new GatewayError(404, 'Локальное подключение ERP не найдено.');
-    const address = connection.baseUrl + (segments.length ? `/${segments.join('/')}` : '');
+    const suffix = segments.length ? `/${segments.join('/')}` : '';
+    const address = connection.baseUrl + suffix;
     const decoded = decodeURIComponent(address);
     const owner = profiles.find(({ scope }) => decoded === scope || decoded.startsWith(`${scope}/`));
     if (owner !== connection) throw new GatewayError(403, 'Для этого пути настроено другое подключение.');
 
+    if (connection.originOnly) {
+      const path = decodeURIComponent(suffix).replace(/\/$/, '');
+      const isTableRead =
+        req.method === 'GET'
+          ? path.endsWith('/metadata') && isErpTablePath(path.slice(0, -'/metadata'.length))
+          : isErpTablePath(path);
+      if (!isTableRead)
+        throw new GatewayError(403, 'Для другого маршрута укажите путь к API таблиц в baseUrl профиля.');
+    }
+
     const headers = new Headers({ Accept: 'application/json' });
     if (connection.cookie) headers.set('Cookie', connection.cookie);
     const body = req.method === 'POST' ? await readBody(req) : undefined;
+    if (connection.originOnly && body !== undefined && !isRowQuery(body))
+      throw new GatewayError(400, 'Ожидается запрос строк таблицы с параметрами pageable, filters и sorts.');
     if (body !== undefined) headers.set('Content-Type', req.headers['content-type']!);
     const controller = new AbortController();
     const cancel = () => controller.abort();
@@ -166,12 +250,16 @@ export function createErpDevMiddleware(env: Environment, upstreamFetch: typeof f
         body,
         redirect: 'manual',
         signal: controller.signal,
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted)
+          throw new GatewayError(504, 'Истекло время ожидания ответа от стенда ERP.');
+        throw connectionFailure(error);
       });
       if (result.status >= 300 && result.status < 400) {
         await result.body?.cancel();
         throw new GatewayError(
           502,
-          'Стенд перенаправил запрос. Проверьте URL таблицы и срок действия сессии.',
+          `Стенд перенаправил запрос (HTTP ${result.status}). Проверьте URL таблицы и срок действия сессии.`,
         );
       }
       if (!result.body) {
@@ -183,7 +271,7 @@ export function createErpDevMiddleware(env: Environment, upstreamFetch: typeof f
         await result.body.cancel();
         throw new GatewayError(
           result.ok ? 502 : result.status,
-          'Стенд вернул ответ в формате, отличном от JSON. Проверьте адрес и сессию.',
+          `Стенд вернул HTTP ${result.status} с ответом в формате, отличном от JSON. Проверьте адрес и сессию.`,
         );
       }
       res.writeHead(result.status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -203,6 +291,7 @@ export function createErpDevMiddleware(env: Environment, upstreamFetch: typeof f
         error instanceof GatewayError
           ? error
           : new GatewayError(502, 'Не удалось получить ответ от стенда ERP.');
+      res.setHeader('X-Erp-Proxy-Error', '1');
       sendJson(res, failure.status, { message: failure.message });
     });
   };

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { decodeTablePath } from '../../shared/erp-dev-path';
+import { decodeTablePath, isErpTablePath } from '../../shared/erp-dev-path';
 
 export interface ErpTableConnection {
   id: string;
@@ -9,11 +9,13 @@ export interface ErpTableConnection {
 
 type ConnectionsState =
   | { status: 'loading' }
-  | { status: 'error' }
+  | { status: 'error'; message?: string }
   | { status: 'ready'; connections: ErpTableConnection[] };
 
 const ConnectionsContext = createContext<ConnectionsState | undefined>(undefined);
 export const useErpTableConnections = () => useContext(ConnectionsContext);
+export const connectionLoadError =
+  'Не удалось прочитать локальные подключения таблиц. Проверьте конфигурацию Vite и обновите страницу.';
 
 export function LocalErpTableConnections({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ConnectionsState>({ status: 'loading' });
@@ -26,6 +28,15 @@ export function LocalErpTableConnections({ children }: { children: ReactNode }) 
           cache: 'no-store',
           redirect: 'error',
         });
+        if (response.status === 503) {
+          const problem = await response.json();
+          if (!controller.signal.aborted)
+            setState({
+              status: 'error',
+              message: typeof problem?.message === 'string' ? problem.message : undefined,
+            });
+          return;
+        }
         if (!response.ok) throw new Error();
         const { connections } = await response.json();
         if (!Array.isArray(connections) || !connections.every(isConnection)) throw new Error();
@@ -71,11 +82,12 @@ export function resolveTableRoute(
     return { kind: 'error', message: 'Укажите адрес API таблицы без логина, пароля и фрагмента.' };
   if (target.origin === studioOrigin) return direct;
   if (state.status === 'loading') return { kind: 'pending' };
-  if (state.status === 'error')
+  if (state.status === 'error') return { kind: 'error', message: state.message || connectionLoadError };
+  if (target.pathname === '/')
     return {
       kind: 'error',
       message:
-        'Не удалось прочитать локальные подключения таблиц. Проверьте конфигурацию Vite и обновите страницу.',
+        'Введите полный URL таблицы с путём, например /api/tables/expenses. Виджет добавит /metadata сам.',
     };
   const profiles = state.connections.filter(({ baseUrl }) => new URL(baseUrl).origin === target.origin);
   if (!profiles.length) return direct;
@@ -88,14 +100,23 @@ export function resolveTableRoute(
     if (
       scope &&
       scope.length > longestScope.length &&
-      (scope === targetPath || targetPath.startsWith(scope + '/'))
+      (scope === '/' || scope === targetPath || targetPath.startsWith(scope + '/'))
     ) {
       connection = profile;
       longestScope = scope;
     }
   }
   if (!connection) return direct;
-  const remaining = target.pathname.split('/').slice(longestScope.split('/').length);
+  if (longestScope === '/' && !isErpTablePath(targetPath))
+    return {
+      kind: 'error',
+      message:
+        'Укажите URL таблицы вида …/tables/имя или …/erp-table/имя. Суффикс /metadata виджет добавит сам. Для другого маршрута задайте в baseUrl путь к API таблиц.',
+    };
+  const remaining = target.pathname
+    .split('/')
+    .slice(longestScope === '/' ? 1 : longestScope.split('/').length);
+  if (longestScope === '/' && remaining.at(-1) === '') remaining.pop();
   const suffix = remaining.length ? '/' + remaining.join('/') : '';
   // An absolute local URL also takes precedence over axios.defaults.baseURL in the private SDK.
   const local = new URL('/__erp_tables/' + encodeURIComponent(connection.id) + suffix, studioOrigin);
@@ -118,7 +139,7 @@ export function suggestedTableBaseUrl(tableUrl: string): string {
     return fallback;
   if (originalDecodedPath(tableUrl) === undefined) return fallback;
   const parts = decodeTablePath(url.pathname)?.split('/').filter(Boolean);
-  if (!parts?.length) return fallback;
+  if (!parts?.length) return url.origin;
   if (parts.length > 1) parts.pop();
   // Encode all punctuation meaningful to dotenv or shell quoting, including apostrophes and dollar signs.
   const path = parts

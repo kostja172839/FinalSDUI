@@ -16,16 +16,23 @@ const profiles = [
     baseUrl: 'https://finance.example.test/api/tables/ledger',
     cookieEnv: 'ERP_TABLE_COOKIE_LEDGER',
   },
+  { id: 'stand', baseUrl: 'https://finance.example.test/', cookieEnv: 'ERP_TABLE_COOKIE_STAND' },
+  { id: 'sandbox', baseUrl: 'https://sandbox.example.test' },
 ];
 const env = {
   ERP_TABLE_CONNECTIONS: JSON.stringify(profiles),
   ERP_TABLE_COOKIE_FINANCE: 'devSession=fixture-finance',
   ERP_TABLE_COOKIE_TRAVEL: 'devSession=fixture-travel',
   ERP_TABLE_COOKIE_LEDGER: 'devSession=fixture-ledger',
+  ERP_TABLE_COOKIE_STAND: 'devSession=fixture-stand',
 };
 
-async function withGateway(upstream: typeof fetch, run: (origin: string) => Promise<void>) {
-  const gateway = createErpDevMiddleware(env, upstream);
+async function withGateway(
+  upstream: typeof fetch,
+  run: (origin: string) => Promise<void>,
+  config: Record<string, string> = env,
+) {
+  const gateway = createErpDevMiddleware(config, upstream);
   const server = createServer((req, res) => {
     gateway(req, res, () => res.writeHead(200).end('downstream middleware'));
   });
@@ -128,7 +135,7 @@ test('the local connection list exposes routing information and lets ordinary ap
         connections: profiles
           .map(({ id, baseUrl, cookieEnv }) => ({
             id,
-            baseUrl,
+            baseUrl: baseUrl.replace(/\/$/, ''),
             authenticated: Boolean(cookieEnv),
           }))
           .sort(byId),
@@ -141,21 +148,114 @@ test('the local connection list exposes routing information and lets ordinary ap
   );
 });
 
-test('incomplete or ambiguous profiles fail configuration before any requests can be sent', () => {
+test('invalid ERP configuration reports a local diagnostic and keeps the rest of Studio available', async () => {
   const [base] = profiles;
-  for (const connections of [
-    [{ ...base, baseUrl: 'https://finance.example.test/' }],
+  const invalid = [
+    [profiles[4], { ...profiles[4], id: 'another', baseUrl: 'https://finance.example.test' }],
     [{ ...base, baseUrl: 'http://finance.example.test/api/tables' }],
     [{ ...base, baseUrl: base.baseUrl + '?region=test' }],
     [{ ...base, cookieEnv: 'UNRELATED_ENVIRONMENT_VARIABLE' }],
     [{ ...base, cookieEnv: 'ERP_TABLE_COOKIE_MISSING' }],
     [base, { ...base, id: 'another', baseUrl: base.baseUrl + '/' }],
     [base, { ...base, baseUrl: profiles[1].baseUrl }],
-  ]) {
-    assert.throws(() =>
-      createErpDevMiddleware({ ...env, ERP_TABLE_CONNECTIONS: JSON.stringify(connections) }),
+  ].map((connections) => JSON.stringify(connections));
+  invalid.push('bad-json=fixture-sensitive-value');
+  for (const raw of invalid) {
+    await withGateway(
+      async () => assert.fail('a broken configuration must not forward ERP requests'),
+      async (origin) => {
+        for (const path of ['/__erp_tables/connections', '/__erp_tables/finance/expenses/metadata']) {
+          const response = await fetch(origin + path);
+          assert.equal(response.status, 503);
+          const result = await response.json();
+          assert.deepEqual(Object.keys(result), ['message']);
+          assert.ok(typeof result.message === 'string' && result.message.trim());
+          for (const secret of [env.ERP_TABLE_COOKIE_FINANCE, 'fixture-sensitive-value']) {
+            assert.ok(!result.message.includes(secret));
+          }
+        }
+        assert.equal(await (await fetch(origin + '/api/health')).text(), 'downstream middleware');
+      },
+      { ...env, ERP_TABLE_CONNECTIONS: raw },
     );
   }
+});
+
+test('a stand origin forwards metadata and row queries under nested table mounts', async () => {
+  const calls: Array<[string, string, string | null, string]> = [];
+  const rowQuery = JSON.stringify({
+    filters: [],
+    sorts: [{ sortParam: 'statusName', sortType: 'ASC' }],
+    pageable: { offset: 10, limit: 10 },
+  });
+  const query = '?mode=approve&tag=a&tag=b';
+  await withGateway(
+    async (input, init) => {
+      const req = new Request(input, init);
+      calls.push([req.method, req.url, req.headers.get('cookie'), await req.text()]);
+      return Response.json({ data: {} });
+    },
+    async (origin) => {
+      for (const [id, path] of [
+        ['stand', '/reports/v2/tables/expenses'],
+        ['sandbox', '/api/demo/erp-table/product-events'],
+      ]) {
+        const registry = origin + '/__erp_tables/' + id + path;
+        assert.equal((await fetch(registry + '/metadata' + query)).status, 200);
+        assert.equal(
+          (
+            await fetch(registry + query, {
+              method: 'POST',
+              headers: { Origin: origin, 'Content-Type': 'application/json' },
+              body: rowQuery,
+            })
+          ).status,
+          200,
+        );
+      }
+      const reports = 'https://finance.example.test/reports/v2/tables/expenses';
+      const events = 'https://sandbox.example.test/api/demo/erp-table/product-events';
+      assert.deepEqual(calls, [
+        ['GET', reports + '/metadata' + query, env.ERP_TABLE_COOKIE_STAND, ''],
+        ['POST', reports + query, env.ERP_TABLE_COOKIE_STAND, rowQuery],
+        ['GET', events + '/metadata' + query, null, ''],
+        ['POST', events + query, null, rowQuery],
+      ]);
+    },
+  );
+});
+
+test('a stand origin accepts only table reads and defers to the configured API path owner', async () => {
+  let calls = 0;
+  await withGateway(
+    async () => {
+      calls++;
+      return Response.json({});
+    },
+    async (origin) => {
+      const url = origin + '/__erp_tables/stand';
+      const registry = url + '/reports/tables/expenses';
+      const post = (target: string, data: unknown) =>
+        fetch(target, {
+          method: 'POST',
+          headers: { Origin: origin, 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+      const readQuery = { sorts: [], filters: [], pageable: { offset: 0, limit: 10 } };
+      for (const response of [
+        await fetch(url + '/reports/configuration/metadata'),
+        await fetch(registry),
+        await post(registry + '/metadata', readQuery),
+        await post(url + '/reports/settings', readQuery),
+        await post(registry, { title: 'New item' }),
+        await post(registry, { ...readQuery, pageable: 'invalid' }),
+        await fetch(url + '/api/tables/expenses/metadata'),
+      ]) {
+        assert.ok(response.status >= 400 && response.status < 500, `unexpected status ${response.status}`);
+      }
+      assert.equal(calls, 0);
+    },
+  );
 });
 
 // node:http preserves the request target exactly as received by the middleware.
@@ -201,6 +301,45 @@ test('untrusted callers and requests outside configured paths never reach the ta
   );
 });
 
+test('network failures identify DNS and TLS problems without exposing transport details', async () => {
+  const rawDetail = 'sensitive raw detail';
+  for (const [code, diagnostic] of [
+    ['ENOTFOUND', /DNS/i],
+    ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', /сертификат/i],
+  ] as const) {
+    await withGateway(
+      async () => {
+        const cause = Object.assign(new Error(rawDetail), { code });
+        throw new TypeError('fetch failed', { cause });
+      },
+      async (origin) => {
+        const response = await fetch(origin + '/__erp_tables/finance/expenses/metadata');
+        assert.equal(response.status, 502);
+        assert.equal(response.headers.get('x-erp-proxy-error'), '1');
+        const data = await response.json();
+        assert.deepEqual(Object.keys(data), ['message']);
+        assert.match(data.message, diagnostic);
+        for (const detail of [rawDetail, profiles[0].baseUrl, env.ERP_TABLE_COOKIE_FINANCE, '\n    at ']) {
+          assert.ok(!data.message.includes(detail));
+        }
+      },
+    );
+  }
+});
+
+test('an upstream JSON 502 is distinguishable from a locally generated error', async () => {
+  const body = { message: 'service unavailable' };
+  await withGateway(
+    async () => Response.json(body, { status: 502, headers: { 'X-Erp-Proxy-Error': '1' } }),
+    async (origin) => {
+      const response = await fetch(origin + '/__erp_tables/finance/expenses/metadata');
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get('x-erp-proxy-error'), null);
+      assert.deepEqual(await response.json(), body);
+    },
+  );
+});
+
 test('redirects never carry the developer session to a second destination or expose its location', async () => {
   const destination = 'https://other.example.test/login';
   const calls: string[] = [];
@@ -216,10 +355,14 @@ test('redirects never carry the developer session to a second destination or exp
     },
     async (origin) => {
       const response = await fetch(`${origin}/__erp_tables/travel/expenses/metadata`, { redirect: 'manual' });
-      assert.ok(response.status >= 400);
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get('x-erp-proxy-error'), '1');
       assert.equal(response.headers.get('location'), null);
       assert.equal(response.headers.get('set-cookie'), null);
-      assert.ok(!(await response.text()).includes(destination));
+      const data = await response.json();
+      assert.deepEqual(Object.keys(data), ['message']);
+      assert.match(data.message, /перенаправ/i);
+      assert.ok(!data.message.includes(destination));
       assert.deepEqual(calls, [profiles[1].baseUrl + '/expenses/metadata']);
     },
   );

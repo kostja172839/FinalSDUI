@@ -42,6 +42,30 @@ test('profile selection requires the right source origin, port and path segment'
   }
 });
 
+test('a stand origin keeps the full table path and query while more specific profiles take precedence', () => {
+  const domain = new URL(api.baseUrl).origin;
+  for (const baseUrl of [domain, domain + '/']) {
+    const stand = { id: 'stand', baseUrl, authenticated: true };
+    const state = { status: 'ready' as const, connections: [stand, tables] };
+    for (const path of ['/reports/v2/tables/expenses', '/demo/erp-table/product-events']) {
+      const query = '?tag=a&tag=b&mode=approve';
+      const expected = {
+        kind: 'proxy',
+        connection: stand,
+        url: studioOrigin + '/__erp_tables/stand' + path + query,
+      };
+      assert.deepEqual(resolveTableRoute(domain + path + query, state, studioOrigin), expected);
+      assert.deepEqual(resolveTableRoute(domain + path + '/' + query, state, studioOrigin), expected);
+    }
+    assert.deepEqual(resolveTableRoute(tables.baseUrl + '/expenses', state, studioOrigin), {
+      kind: 'proxy',
+      connection: tables,
+      url: studioOrigin + '/__erp_tables/expenses/expenses',
+    });
+    assert.equal(resolveTableRoute(domain + '/reports/settings', state, studioOrigin).kind, 'error');
+  }
+});
+
 test('profile ownership compares decoded segments and forwards the original suffix and query', () => {
   const encoded = { ...tables, baseUrl: 'https://qa.example.test/%61pi/tabl%65s' };
   const state = { status: 'ready' as const, connections: [api, encoded] };
@@ -57,6 +81,7 @@ test('profile ownership compares decoded segments and forwards the original suff
 });
 
 test('the setup example suggests the API directory and only interpolates dotenv-safe addresses', () => {
+  assert.equal(suggestedTableBaseUrl('https://qa.test/'), 'https://qa.test');
   assert.equal(suggestedTableBaseUrl(tables.baseUrl + '/expenses?mode=ok#section'), tables.baseUrl);
   assert.equal(
     suggestedTableBaseUrl('https://qa.example.test:8443/expenses?token=hidden'),
@@ -71,7 +96,6 @@ test('the setup example suggests the API directory and only interpolates dotenv-
     'https://$name.example.test/api/tables',
     'https://qa.test/a%0Ab/expenses',
     '/api/local',
-    'https://qa.test/',
   ]) {
     assert.equal(suggestedTableBaseUrl(url), 'https://erp.example.test/api/tables');
   }

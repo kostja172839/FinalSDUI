@@ -12,3 +12,8 @@ export function decodeTablePath(path: string): string | undefined {
     return undefined;
   }
 }
+
+/** The table endpoint itself; its metadata is served one level below it. */
+export function isErpTablePath(decodedPath: string): boolean {
+  return /\/(?:tables|erp-table)\/[^/]+\/?$/.test(decodedPath);
+}
